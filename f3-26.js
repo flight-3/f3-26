@@ -10,10 +10,9 @@ function createFlight3FocusTrap(container, { signal } = {}) {
     Array.from(container.querySelectorAll(FLIGHT3_FOCUSABLE_SELECTOR)).filter(
       (element) =>
         !element.hasAttribute("data-flight3-focus-guard") &&
-        !element.hasAttribute("hidden") &&
-        !element.matches(":disabled") &&
+        !element.hasAttribute("hidden") && !element.matches(":disabled") &&
         !element.closest("[inert], [aria-hidden='true']") &&
-        element.getClientRects().length > 0,
+        element.getClientRects().length > 0
     );
 
   const guards = [document.createElement("span"), document.createElement("span")];
@@ -79,7 +78,7 @@ function createFlight3FocusTrap(container, { signal } = {}) {
         flight3InertOwners.delete(element);
       });
       isolated = [];
-    },
+    }
   };
   signal?.addEventListener("abort", () => trap.deactivate(), { once: true });
   return trap;
@@ -99,31 +98,75 @@ function runFlight3Initializers(context, initializers) {
 }
 
 function enhanceFlight3Button(element, signal) {
-  if (!element || element.matches("button, input, a[href]")) return;
+  if (!element || element.matches('button, input, a[href]')) return;
   const role = element.getAttribute("role");
   const tabindex = element.getAttribute("tabindex");
   element.setAttribute("role", "button");
   if (tabindex === null) element.setAttribute("tabindex", "0");
-  element.addEventListener(
-    "keydown",
-    (event) => {
-      if (event.key !== "Enter" && event.key !== " ") return;
-      event.preventDefault();
-      element.click();
-    },
-    signal ? { signal } : undefined,
-  );
-  signal?.addEventListener(
-    "abort",
-    () => {
-      if (role === null) element.removeAttribute("role");
-      else element.setAttribute("role", role);
-      if (tabindex === null) element.removeAttribute("tabindex");
-      else element.setAttribute("tabindex", tabindex);
-    },
-    { once: true },
-  );
+  element.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    element.click();
+  }, signal ? { signal } : undefined);
+  signal?.addEventListener("abort", () => {
+    if (role === null) element.removeAttribute("role");
+    else element.setAttribute("role", role);
+    if (tabindex === null) element.removeAttribute("tabindex");
+    else element.setAttribute("tabindex", tabindex);
+  }, { once: true });
 }
+
+/* Persistent capture-phase guard. Delegation covers the modal and later Swup
+   pages without observers, per-form listeners or changes to Webflow delivery. */
+function initFlight3Honeypots() {
+  if (window.Flight3Honeypot) return window.Flight3Honeypot;
+  const protectedForm = (form) => form instanceof HTMLFormElement &&
+    form.hasAttribute("data-flight3-honeypot");
+  const fields = (form) => Array.from(form.querySelectorAll("input[data-flight3-honeypot-field]"))
+    .filter((field) => field.form === form);
+  const feedback = (form) => form.querySelector("[data-flight3-honeypot-feedback]");
+  const clearFeedback = (form) => {
+    form.removeAttribute("data-flight3-honeypot-blocked");
+    const message = feedback(form);
+    if (message) message.hidden = true;
+  };
+  const onSubmit = (event) => {
+    const form = event.target;
+    if (!protectedForm(form)) return;
+    // Do not block a real lead when markup was installed incompletely.
+    if (!fields(form).some((field) => field.value.length > 0)) {
+      clearFeedback(form);
+      return;
+    }
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    form.setAttribute("data-flight3-honeypot-blocked", "true");
+    const message = feedback(form);
+    if (message) {
+      message.hidden = false;
+      message.focus({ preventScroll: true });
+      // No fake success, network request, field reset, or submit-button mutation.
+    }
+  };
+  const onRetry = (event) => {
+    const button = event.target.closest?.("[data-flight3-honeypot-reset]");
+    if (!button) return;
+    const form = button.closest("form");
+    if (!protectedForm(form)) return;
+    event.preventDefault();
+    // Recover from unwanted autofill without erasing any real form fields.
+    fields(form).forEach((field) => { field.value = ""; });
+    clearFeedback(form);
+    form.querySelector('input[type="submit"], button[type="submit"], button:not([type])')?.focus();
+  };
+  window.addEventListener("submit", onSubmit, true);
+  window.addEventListener("click", onRetry, true);
+  window.Flight3Honeypot = Object.freeze({ version: "1.0.0", installed: true });
+  return window.Flight3Honeypot;
+}
+
+// Runs before Webflow's ready callback, even if an optional motion library fails.
+initFlight3Honeypots();
 
 /* Persistent, opt-in analytics consent. No legacy fs-cc runtime is required. */
 function initFlight3Consent({ gsap, setScrollLock }) {
@@ -135,22 +178,21 @@ function initFlight3Consent({ gsap, setScrollLock }) {
     const nativeBanner = document.querySelector('[fs-cc="banner"]');
     const nativePreferences = document.querySelector('[fs-cc="preferences"]');
     const candidate = nativeBanner?.parentElement;
-    if (
-      candidate &&
-      nativePreferences?.parentElement === candidate &&
-      candidate.matches(".cc, .flight3-consent") &&
-      !candidate.closest("#swup")
-    ) {
+    if (candidate && nativePreferences?.parentElement === candidate &&
+        candidate.matches(".cc, .flight3-consent") && !candidate.closest("#swup")) {
       root = candidate;
       root.setAttribute("data-flight3-consent", "");
     }
   }
   // Fail closed: no authored consent UI means no tracking scripts are loaded.
   if (!root || root.closest("#swup")) return null;
-  const find = (role, legacy = role) => root.querySelector(`[data-consent="${role}"], [fs-cc="${legacy}"]`);
+  const find = (role, legacy = role) =>
+    root.querySelector(`[data-consent="${role}"], [fs-cc="${legacy}"]`);
   const banner = find("banner");
   const preferences = find("preferences");
-  const analyticsInput = root.querySelector('input[data-consent-category="analytics"], input[fs-cc-checkbox="analytics"]');
+  const analyticsInput = root.querySelector(
+    'input[data-consent-category="analytics"], input[fs-cc-checkbox="analytics"]'
+  );
   if (!banner || !preferences || !analyticsInput) {
     console.warn("Flight3: consent markup is incomplete; analytics remains blocked.");
     return null;
@@ -160,7 +202,9 @@ function initFlight3Consent({ gsap, setScrollLock }) {
   // normalization strictly to preferences; contact/newsletter forms stay native.
   preferences.classList.remove("w-form");
   preferences.querySelectorAll("form").forEach((form) => {
-    ["data-wf-page-id", "data-wf-element-id", "data-turnstile-sitekey"].forEach((attribute) => form.removeAttribute(attribute));
+    ["data-wf-page-id", "data-wf-element-id", "data-turnstile-sitekey"].forEach(
+      (attribute) => form.removeAttribute(attribute)
+    );
   });
   preferences.querySelectorAll(".w-form-done, .w-form-fail").forEach((element) => {
     element.hidden = true;
@@ -187,25 +231,14 @@ function initFlight3Consent({ gsap, setScrollLock }) {
     try {
       const value = JSON.parse(raw);
       const now = Date.now();
-      return value?.version === 1 &&
-        typeof value.analytics === "boolean" &&
-        Number.isFinite(value.timestamp) &&
-        Number.isFinite(value.expires) &&
-        value.timestamp <= now &&
-        value.expires > now &&
-        value.expires <= value.timestamp + MAX_AGE
-        ? value
-        : null;
-    } catch {
-      return null;
-    }
+      return value?.version === 1 && typeof value.analytics === "boolean" &&
+        Number.isFinite(value.timestamp) && Number.isFinite(value.expires) &&
+        value.timestamp <= now && value.expires > now &&
+        value.expires <= value.timestamp + MAX_AGE ? value : null;
+    } catch { return null; }
   };
   const read = () => {
-    try {
-      return parse(localStorage.getItem(KEY));
-    } catch {
-      return null;
-    }
+    try { return parse(localStorage.getItem(KEY)); } catch { return null; }
   };
 
   let record = read();
@@ -228,13 +261,9 @@ function initFlight3Consent({ gsap, setScrollLock }) {
     element.inert = !visible;
     element.setAttribute("aria-hidden", String(!visible));
   };
-  const animate = (element, vars) =>
-    gsap.to(element, {
-      ...vars,
-      duration: reduce.matches ? 0 : 0.3,
-      ease: "power1.out",
-      overwrite: true,
-    });
+  const animate = (element, vars) => gsap.to(element, {
+    ...vars, duration: reduce.matches ? 0 : 0.3, ease: "power1.out", overwrite: true
+  });
   banner.setAttribute("role", "region");
   banner.setAttribute("aria-label", "Cookie choices");
   preferences.setAttribute("role", "dialog");
@@ -258,12 +287,7 @@ function initFlight3Consent({ gsap, setScrollLock }) {
     element.hidden = true;
   });
   root.querySelectorAll("[data-consent], [fs-cc]").forEach((element) => {
-    if (
-      element.matches(
-        '[data-consent="banner"], [data-consent="preferences"], [fs-cc="banner"], [fs-cc="preferences"], [fs-cc="interaction"]',
-      )
-    )
-      return;
+    if (element.matches('[data-consent="banner"], [data-consent="preferences"], [fs-cc="banner"], [fs-cc="preferences"], [fs-cc="interaction"]')) return;
     enhanceFlight3Button(element);
   });
   gsap.set([banner, preferences], { display: "none" });
@@ -295,23 +319,14 @@ function initFlight3Consent({ gsap, setScrollLock }) {
       setVisible(banner, false);
       bannerTween = animate(banner, {
         yPercent: reduce.matches ? 0 : 100,
-        onComplete: () => {
-          banner.style.display = "none";
-        },
+        onComplete: () => { banner.style.display = "none"; }
       });
     }
   }
 
   function updateBanner() {
-    showBanner(
-      ready &&
-        !record &&
-        !prefsOpen &&
-        !navigating &&
-        !html.matches(
-          ".is-intro-pending, .is-intro-playing, .is-transitioning, .has-form-panel-open, .has-video-modal-open, .has-mobile-nav-open",
-        ),
-    );
+    showBanner(ready && !record && !prefsOpen && !navigating &&
+      !html.matches(".is-intro-pending, .is-intro-playing, .is-transitioning, .has-form-panel-open, .has-video-modal-open, .has-mobile-nav-open"));
   }
 
   function closePreferences({ immediate = false, restoreFocus = true } = {}) {
@@ -323,9 +338,7 @@ function initFlight3Consent({ gsap, setScrollLock }) {
     trap.deactivate();
     html.classList.remove("has-consent-preferences-open");
     setScrollLock("consent-preferences", false);
-    const finish = () => {
-      preferences.style.display = "none";
-    };
+    const finish = () => { preferences.style.display = "none"; };
     if (immediate || reduce.matches) finish();
     else prefsTween = animate(preferences, { y: 20, opacity: 0, onComplete: finish });
     if (restoreFocus && lastFocus?.isConnected) lastFocus.focus?.({ preventScroll: true });
@@ -334,12 +347,7 @@ function initFlight3Consent({ gsap, setScrollLock }) {
   }
 
   function openPreferences(trigger = document.activeElement) {
-    if (
-      prefsOpen ||
-      navigating ||
-      html.matches(".is-intro-pending, .is-intro-playing, .has-form-panel-open, .has-video-modal-open, .has-mobile-nav-open")
-    )
-      return;
+    if (prefsOpen || navigating || html.matches(".is-intro-pending, .is-intro-playing, .has-form-panel-open, .has-video-modal-open, .has-mobile-nav-open")) return;
     lastFocus = trigger;
     prefsOpen = true;
     prefsTween?.kill();
@@ -358,25 +366,18 @@ function initFlight3Consent({ gsap, setScrollLock }) {
   function consentSignals(granted) {
     const state = granted ? "granted" : "denied";
     window[`ga-disable-${GA_ID}`] = !granted;
-    if (gaRequested)
-      window.gtag?.("consent", "update", {
-        analytics_storage: state,
-        ad_storage: "denied",
-        ad_user_data: "denied",
-        ad_personalization: "denied",
-      });
-    if (clarityRequested)
-      window.clarity?.("consentv2", {
-        analytics_Storage: state,
-        ad_Storage: "denied",
-      });
+    if (gaRequested) window.gtag?.("consent", "update", {
+      analytics_storage: state,
+      ad_storage: "denied", ad_user_data: "denied", ad_personalization: "denied"
+    });
+    if (clarityRequested) window.clarity?.("consentv2", {
+      analytics_Storage: state, ad_Storage: "denied"
+    });
   }
 
   function removeAnalyticsCookies() {
     // Only known analytics cookies; never remove Webflow/form/security cookies.
-    const names = document.cookie
-      .split(";")
-      .map((part) => part.trim().split("=")[0])
+    const names = document.cookie.split(";").map((part) => part.trim().split("=")[0])
       .filter((name) => /^(_ga(?:_|$)|_gid$|_gat(?:_|$)|_clck$|_clsk$)/.test(name));
     const host = window.location.hostname;
     const domains = ["", host];
@@ -385,13 +386,9 @@ function initFlight3Consent({ gsap, setScrollLock }) {
     const paths = new Set(["/"]);
     const parts = window.location.pathname.split("/").filter(Boolean);
     parts.forEach((_, index) => paths.add("/" + parts.slice(0, index + 1).join("/")));
-    names.forEach((name) =>
-      domains.forEach((domain) =>
-        paths.forEach((path) => {
-          document.cookie = `${name}=; Max-Age=0; path=${path}; SameSite=Lax${domain ? `; domain=${domain}` : ""}`;
-        }),
-      ),
-    );
+    names.forEach((name) => domains.forEach((domain) => paths.forEach((path) => {
+      document.cookie = `${name}=; Max-Age=0; path=${path}; SameSite=Lax${domain ? `; domain=${domain}` : ""}`;
+    })));
   }
 
   function addScript(id, src, onError) {
@@ -409,16 +406,10 @@ function initFlight3Consent({ gsap, setScrollLock }) {
     if (!gaRequested) {
       gaRequested = true;
       window.dataLayer = window.dataLayer || [];
-      window.gtag =
-        window.gtag ||
-        function () {
-          window.dataLayer.push(arguments);
-        };
+      window.gtag = window.gtag || function () { window.dataLayer.push(arguments); };
       window.gtag("consent", "default", {
-        analytics_storage: "denied",
-        ad_storage: "denied",
-        ad_user_data: "denied",
-        ad_personalization: "denied",
+        analytics_storage: "denied", ad_storage: "denied",
+        ad_user_data: "denied", ad_personalization: "denied"
       });
       window.gtag("js", new Date());
       consentSignals(true);
@@ -430,11 +421,9 @@ function initFlight3Consent({ gsap, setScrollLock }) {
     }
     if (!clarityRequested) {
       clarityRequested = true;
-      window.clarity =
-        window.clarity ||
-        function () {
-          (window.clarity.q = window.clarity.q || []).push(arguments);
-        };
+      window.clarity = window.clarity || function () {
+        (window.clarity.q = window.clarity.q || []).push(arguments);
+      };
       consentSignals(true);
       addScript("flight3-clarity-tag", `https://www.clarity.ms/tag/${CLARITY_ID}`, () => {
         console.warn("Flight3: Clarity could not load; site functionality is unaffected.");
@@ -448,10 +437,8 @@ function initFlight3Consent({ gsap, setScrollLock }) {
     if (!gaConfigured) return;
     sentToken = route.token;
     window.gtag("event", "page_view", {
-      send_to: GA_ID,
-      page_location: route.url,
-      page_title: route.title,
-      page_referrer: route.referrer,
+      send_to: GA_ID, page_location: route.url,
+      page_title: route.title, page_referrer: route.referrer
     });
     // Clarity owns its history instrumentation. These are route tags, not
     // synthetic page views or personal/user identifiers.
@@ -467,11 +454,9 @@ function initFlight3Consent({ gsap, setScrollLock }) {
     syncInputs();
     window.clearTimeout(expiryTimer);
     if (record) expiryTimer = window.setTimeout(() => apply(read()), Math.min(record.expires - Date.now() + 10, 2147483647));
-    document.dispatchEvent(
-      new CustomEvent("flight3:consent-updated", {
-        detail: { essential: true, analytics: allowed, source, persisted },
-      }),
-    );
+    document.dispatchEvent(new CustomEvent("flight3:consent-updated", {
+      detail: { essential: true, analytics: allowed, source, persisted }
+    }));
     if (mustReload) {
       removeAnalyticsCookies();
       // Denied consent modes may still send cookieless data. A native reload
@@ -487,12 +472,8 @@ function initFlight3Consent({ gsap, setScrollLock }) {
     const timestamp = Date.now();
     const next = { version: 1, essential: true, analytics: analytics === true && !gpc(), timestamp, expires: timestamp + MAX_AGE };
     let persisted = false;
-    try {
-      localStorage.setItem(KEY, JSON.stringify(next));
-      persisted = true;
-    } catch {
-      console.warn("Flight3: privacy choices apply to this document only because storage is unavailable.");
-    }
+    try { localStorage.setItem(KEY, JSON.stringify(next)); persisted = true; }
+    catch { console.warn("Flight3: privacy choices apply to this document only because storage is unavailable."); }
     closePreferences();
     apply(next, { source: "visitor", persisted });
   }
@@ -502,45 +483,33 @@ function initFlight3Consent({ gsap, setScrollLock }) {
     const input = event.target;
     if (input instanceof HTMLInputElement) input.closest(".fs-cc-prefs_status-button")?.classList.toggle("cc-active", input.checked);
   });
-  document.addEventListener(
-    "click",
-    (event) => {
-      if (!(event.target instanceof Element)) return;
-      const button = event.target.closest("[data-consent], [fs-cc]");
-      if (!button) return;
-      const action = button.getAttribute("data-consent") || button.getAttribute("fs-cc");
-      if (action !== "open-preferences" && !root.contains(button)) return;
-      if (!["open-preferences", "allow", "deny", "submit", "close"].includes(action)) return;
+  document.addEventListener("click", (event) => {
+    if (!(event.target instanceof Element)) return;
+    const button = event.target.closest("[data-consent], [fs-cc]");
+    if (!button) return;
+    const action = button.getAttribute("data-consent") || button.getAttribute("fs-cc");
+    if (action !== "open-preferences" && !root.contains(button)) return;
+    if (!["open-preferences", "allow", "deny", "submit", "close"].includes(action)) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (action === "open-preferences") openPreferences(button);
+    else if (action === "allow") save(true);
+    else if (action === "deny") save(false);
+    else if (action === "submit") save(analyticsInput.checked);
+    else closePreferences(); // Closing is not consent.
+  }, true);
+  preferences.addEventListener("submit", (event) => {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    save(analyticsInput.checked);
+  }, true);
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && prefsOpen) {
       event.preventDefault();
       event.stopImmediatePropagation();
-      if (action === "open-preferences") openPreferences(button);
-      else if (action === "allow") save(true);
-      else if (action === "deny") save(false);
-      else if (action === "submit") save(analyticsInput.checked);
-      else closePreferences(); // Closing is not consent.
-    },
-    true,
-  );
-  preferences.addEventListener(
-    "submit",
-    (event) => {
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      save(analyticsInput.checked);
-    },
-    true,
-  );
-  document.addEventListener(
-    "keydown",
-    (event) => {
-      if (event.key === "Escape" && prefsOpen) {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        closePreferences();
-      }
-    },
-    true,
-  );
+      closePreferences();
+    }
+  }, true);
   root.querySelectorAll(".fs-cc-prefs_dropdown").forEach((dropdown, index) => {
     const toggle = dropdown.querySelector(".fs-cc-prefs_dropdown-toggle");
     const content = dropdown.querySelector(".fs-cc-prefs_dropdown-content");
@@ -561,9 +530,7 @@ function initFlight3Consent({ gsap, setScrollLock }) {
       gsap.set(content, { height: expanded ? 0 : content.getBoundingClientRect().height, overflow: "hidden" });
       tween = animate(content, {
         height: expanded ? "auto" : 0,
-        onComplete: () => {
-          content.hidden = !expanded;
-        },
+        onComplete: () => { content.hidden = !expanded; }
       });
       if (arrow) animate(arrow, { rotation: expanded ? 90 : 0 });
     });
@@ -571,9 +538,7 @@ function initFlight3Consent({ gsap, setScrollLock }) {
   window.addEventListener("storage", (event) => {
     if (event.key === KEY || event.key === null) apply(read());
   });
-  window.addEventListener("pageshow", (event) => {
-    if (event.persisted) apply(read());
-  });
+  window.addEventListener("pageshow", (event) => { if (event.persisted) apply(read()); });
   const observer = new MutationObserver(updateBanner);
   observer.observe(html, { attributes: true, attributeFilter: ["class"] });
   window.Flight3Consent = {
@@ -581,10 +546,7 @@ function initFlight3Consent({ gsap, setScrollLock }) {
     openPreferences,
     accept: () => save(true),
     reject: () => save(false),
-    ready() {
-      ready = true;
-      updateBanner();
-    },
+    ready() { ready = true; updateBanner(); },
     beginNavigation() {
       navigating = true;
       closePreferences({ immediate: true, restoreFocus: false });
@@ -596,16 +558,9 @@ function initFlight3Consent({ gsap, setScrollLock }) {
       navigating = false;
       ready = true;
       if (record && record.expires <= Date.now()) apply(null);
-      else {
-        trackRoute();
-        updateBanner();
-      }
+      else { trackRoute(); updateBanner(); }
     },
-    abortNavigation() {
-      navigating = false;
-      trackRoute();
-      updateBanner();
-    },
+    abortNavigation() { navigating = false; trackRoute(); updateBanner(); }
   };
   apply(record);
   return window.Flight3Consent;
@@ -623,7 +578,9 @@ function initHomeTestimonials({ root, signal, gsap, SplitText }) {
     const list = wrap.querySelector("[data-testimonial-list]");
     if (!list) return;
 
-    const items = Array.from(list.querySelectorAll("[data-testimonial-item]"));
+    const items = Array.from(
+      list.querySelectorAll("[data-testimonial-item]")
+    );
     if (!items.length) return;
 
     const btnPrev = wrap.querySelector("[data-prev]");
@@ -631,39 +588,47 @@ function initHomeTestimonials({ root, signal, gsap, SplitText }) {
     const elCurrent = wrap.querySelector("[data-current]");
     const elTotal = wrap.querySelector("[data-total]");
     const controls = [btnPrev, btnNext].filter(Boolean);
-    const originalItemAria = new Map(items.map((item) => [item, item.getAttribute("aria-hidden")]));
+    const originalItemAria = new Map(
+      items.map((item) => [item, item.getAttribute("aria-hidden")])
+    );
     const originalControlState = new Map(
       controls.map((control) => [
         control,
         {
           disabled: control.getAttribute("disabled"),
-          ariaDisabled: control.getAttribute("aria-disabled"),
-        },
-      ]),
+          ariaDisabled: control.getAttribute("aria-disabled")
+        }
+      ])
     );
     const originalCounterLive = elCurrent?.getAttribute("aria-live") ?? null;
 
     if (elTotal) elTotal.textContent = String(items.length);
     if (elCurrent) elCurrent.setAttribute("aria-live", "polite");
 
-    let activeIndex = items.findIndex((element) => element.classList.contains("is--active"));
+    let activeIndex = items.findIndex((element) =>
+      element.classList.contains("is--active")
+    );
     if (activeIndex < 0) activeIndex = 0;
 
     let isAnimating = false;
     let reduceMotion = false;
     const autoplayEnabled = wrap.getAttribute("data-autoplay") === "true";
-    const autoplayDuration = parseInt(wrap.getAttribute("data-autoplay-duration"), 10) || 4000;
+    const autoplayDuration =
+      parseInt(wrap.getAttribute("data-autoplay-duration"), 10) || 4000;
     let autoplayCall = null;
     let activeTimeline = null;
 
     const slides = items.map((item) => ({
       item,
       image: item.querySelector("[data-testimonial-img]"),
-      splitTargets: [item.querySelector("[data-testimonial-text]"), ...item.querySelectorAll("[data-testimonial-split]")].filter(Boolean),
+      splitTargets: [
+        item.querySelector("[data-testimonial-text]"),
+        ...item.querySelectorAll("[data-testimonial-split]")
+      ].filter(Boolean),
       splitInstances: [],
       getLines() {
         return this.splitInstances.flatMap((instance) => instance.lines);
-      },
+      }
     }));
 
     function setSlideState(slideIndex, isActive) {
@@ -672,7 +637,7 @@ function initHomeTestimonials({ root, signal, gsap, SplitText }) {
       item.setAttribute("aria-hidden", String(!isActive));
       gsap.set(item, {
         autoAlpha: isActive ? 1 : 0,
-        pointerEvents: isActive ? "auto" : "none",
+        pointerEvents: isActive ? "auto" : "none"
       });
     }
 
@@ -709,9 +674,12 @@ function initHomeTestimonials({ root, signal, gsap, SplitText }) {
     updateCounter();
 
     const media = gsap.matchMedia();
-    media.add({ reduce: "(prefers-reduced-motion: reduce)" }, (context) => {
-      reduceMotion = context.conditions.reduce;
-    });
+    media.add(
+      { reduce: "(prefers-reduced-motion: reduce)" },
+      (context) => {
+        reduceMotion = context.conditions.reduce;
+      }
+    );
 
     slides.forEach((slide, slideIndex) => {
       slide.splitInstances = slide.splitTargets.map((element) =>
@@ -727,11 +695,11 @@ function initHomeTestimonials({ root, signal, gsap, SplitText }) {
             gsap.set(self.lines, { yPercent: isActive ? 0 : 110 });
             if (slide.image) {
               gsap.set(slide.image, {
-                clipPath: isActive ? imageClipVisible : imageClipHidden,
+                clipPath: isActive ? imageClipVisible : imageClipHidden
               });
             }
-          },
-        }),
+          }
+        })
       );
     });
 
@@ -751,13 +719,22 @@ function initHomeTestimonials({ root, signal, gsap, SplitText }) {
           updateCounter();
           isAnimating = false;
           setControlsDisabled(false);
-        },
+        }
       });
 
       if (reduceMotion) {
         activeTimeline
-          .to(outgoingSlide.item, { autoAlpha: 0, duration: 0.4, ease: "power2" }, 0)
-          .fromTo(incomingSlide.item, { autoAlpha: 0 }, { autoAlpha: 1, duration: 0.4, ease: "power2" }, 0);
+          .to(
+            outgoingSlide.item,
+            { autoAlpha: 0, duration: 0.4, ease: "power2" },
+            0
+          )
+          .fromTo(
+            incomingSlide.item,
+            { autoAlpha: 0 },
+            { autoAlpha: 1, duration: 0.4, ease: "power2" },
+            0
+          );
         return;
       }
 
@@ -766,7 +743,7 @@ function initHomeTestimonials({ root, signal, gsap, SplitText }) {
 
       gsap.set(incomingSlide.item, {
         autoAlpha: 1,
-        pointerEvents: "auto",
+        pointerEvents: "auto"
       });
       gsap.set(incomingLines, { yPercent: 110 });
 
@@ -780,9 +757,9 @@ function initHomeTestimonials({ root, signal, gsap, SplitText }) {
           yPercent: -110,
           duration: 0.6,
           ease: "power4.inOut",
-          stagger: { amount: 0.25 },
+          stagger: { amount: 0.25 }
         },
-        0,
+        0
       );
 
       if (outgoingSlide.image) {
@@ -791,9 +768,9 @@ function initHomeTestimonials({ root, signal, gsap, SplitText }) {
           {
             clipPath: imageClipHidden,
             duration: 0.6,
-            ease: "power4.inOut",
+            ease: "power4.inOut"
           },
-          0,
+          0
         );
       }
 
@@ -803,9 +780,9 @@ function initHomeTestimonials({ root, signal, gsap, SplitText }) {
           yPercent: 0,
           duration: 0.7,
           ease: "power4.inOut",
-          stagger: { amount: 0.4 },
+          stagger: { amount: 0.4 }
         },
-        ">-=0.3",
+        ">-=0.3"
       );
 
       if (incomingSlide.image) {
@@ -815,9 +792,9 @@ function initHomeTestimonials({ root, signal, gsap, SplitText }) {
           {
             clipPath: imageClipVisible,
             duration: 0.75,
-            ease: "power4.inOut",
+            ease: "power4.inOut"
           },
-          "<",
+          "<"
         );
       }
 
@@ -832,7 +809,7 @@ function initHomeTestimonials({ root, signal, gsap, SplitText }) {
         resetAutoplay();
         goTo((activeIndex + 1) % slides.length);
       },
-      { signal },
+      { signal }
     );
 
     btnPrev?.addEventListener(
@@ -841,7 +818,7 @@ function initHomeTestimonials({ root, signal, gsap, SplitText }) {
         resetAutoplay();
         goTo((activeIndex - 1 + slides.length) % slides.length);
       },
-      { signal },
+      { signal }
     );
 
     cleanupTasks.push(() => {
@@ -883,7 +860,10 @@ function initHomeVideoModal({ root, signal, setScrollLock }) {
   enhanceFlight3Button(openBtn, signal);
   const playButton = modal.querySelector('[data-video-control="play"]');
   const muteButton = modal.querySelector('[data-video-control="mute"]');
-  const source = videoPlayer.getAttribute("data-video-src") || videoPlayer.getAttribute("src") || "";
+  const source =
+    videoPlayer.getAttribute("data-video-src") ||
+    videoPlayer.getAttribute("src") ||
+    "";
   let isOpen = false;
   let lastFocused = null;
 
@@ -985,111 +965,215 @@ function initHomeVideoModal({ root, signal, setScrollLock }) {
   ["play", "pause", "ended", "volumechange"].forEach((eventName) => {
     videoPlayer.addEventListener(eventName, syncControls, { signal });
   });
-  modal.addEventListener(
-    "click",
-    (event) => {
-      const closeControl = event.target.closest?.('[data-video-modal="close"]');
-      const clickedBackdrop = event.target.matches?.('[data-video-modal="backdrop"]') || event.target.classList?.contains("modal_content");
+  modal.addEventListener("click", (event) => {
+    const closeControl = event.target.closest?.('[data-video-modal="close"]');
+    const clickedBackdrop =
+      event.target.matches?.('[data-video-modal="backdrop"]') ||
+      event.target.classList?.contains("modal_content");
 
-      if (closeControl || clickedBackdrop) closeModal(event);
-    },
-    { signal },
-  );
-  videoPlayer.addEventListener(
-    "error",
-    () => {
-      if (isOpen) console.warn("Flight3: the modal video could not be loaded.");
-      syncControls();
-    },
-    { signal },
-  );
-  document.addEventListener(
-    "keydown",
-    (event) => {
-      if (event.key === "Escape" && modal.getAttribute("aria-hidden") === "false") {
-        closeModal();
-      }
-    },
-    { signal },
-  );
+    if (closeControl || clickedBackdrop) closeModal(event);
+  }, { signal });
+  videoPlayer.addEventListener("error", () => {
+    if (isOpen) console.warn("Flight3: the modal video could not be loaded.");
+    syncControls();
+  }, { signal });
+  document.addEventListener("keydown", (event) => {
+    if (
+      event.key === "Escape" &&
+      modal.getAttribute("aria-hidden") === "false"
+    ) {
+      closeModal();
+    }
+  }, { signal });
 
   syncControls();
   return () => closeModal(null, { restoreFocus: false });
 }
 
-function initBackgroundVideos({ root = document, ScrollTrigger = window.ScrollTrigger } = {}) {
-  const cards = Array.from(root.querySelectorAll(".home-feat-card, .home-feat_card"));
-  if (!cards.length || !ScrollTrigger) return;
+/* Source URLs must be authored as data-src in Webflow to prevent parser-time
+   downloads. Old live-src markup remains playable but cannot be made retroactively lazy. */
+const flight3VideoRoots = new WeakMap();
 
-  const mobileQuery = window.matchMedia("(max-width: 767px)");
+function initBackgroundVideos({ root = document, signal, ScrollTrigger = window.ScrollTrigger } = {}) {
+  if (signal?.aborted) return;
+  if (flight3VideoRoots.has(root)) return flight3VideoRoots.get(root);
+  const videos = Array.from(root.querySelectorAll(
+    "video[data-home-feat-video], video[data-flight3-lazy-video]"
+  ));
+  if (!videos.length) return;
+
+  const mobile = window.matchMedia("(max-width: 767px)");
+  const reduced = window.matchMedia("(prefers-reduced-motion: reduce)");
+  const connection = navigator.connection;
   const entries = [];
-  let activeVideo = null;
+  let disposed = false;
+  let activeFeature = null;
+  let warmObserver = null;
+  let visibleObserver = null;
+  const allowed = () => !mobile.matches && !reduced.matches &&
+    !connection?.saveData && !/^(slow-)?2g$/.test(connection?.effectiveType || "");
 
-  const pauseVideo = (video) => {
-    if (!video) return;
-    video.pause();
-    if (activeVideo === video) activeVideo = null;
+  const setState = (entry, state) => entry.video.setAttribute("data-flight3-video-state", state);
+  const pause = (entry) => {
+    entry.request += 1;
+    entry.video.pause();
+    if (activeFeature === entry) activeFeature = null;
   };
-
-  const pauseAll = () => {
-    entries.forEach(({ video }) => video.pause());
-    activeVideo = null;
-  };
-
-  const playVideo = (video) => {
-    if (!video || mobileQuery.matches) return;
-
-    if (activeVideo && activeVideo !== video) activeVideo.pause();
-    if (activeVideo === video && !video.paused) return;
-
-    activeVideo = video;
-    video.play().catch(() => {
-      if (activeVideo === video) activeVideo = null;
+  const release = (entry) => {
+    pause(entry);
+    // Remove only sources managed by this controller; retain their data-src for re-entry.
+    let changed = false;
+    entry.sources.forEach(({ element }) => {
+      if (element.hasAttribute("src")) {
+        element.removeAttribute("src");
+        changed = true;
+      }
     });
+    entry.loaded = false;
+    entry.video.preload = "none";
+    if (changed) entry.video.load(); // Abort an in-flight fetch and restore the poster.
+    setState(entry, "poster");
   };
-
-  cards.forEach((card) => {
-    const video = card.querySelector("[data-home-feat-video]");
-    if (!(video instanceof HTMLVideoElement)) return;
-
-    video.muted = true;
-    video.playsInline = true;
-    video.setAttribute("muted", "");
-    video.setAttribute("playsinline", "");
-
-    const trigger = ScrollTrigger.create({
-      trigger: card,
-      start: "top 75%",
-      end: "bottom 25%",
-      onEnter: () => playVideo(video),
-      onEnterBack: () => playVideo(video),
-      onLeave: () => pauseVideo(video),
-      onLeaveBack: () => pauseVideo(video),
-    });
-
-    entries.push({ video, trigger });
-  });
-
-  if (!entries.length) return;
-
-  const handleMobileChange = (event) => {
-    if (event.matches) {
-      pauseAll();
+  const hydrate = (entry) => {
+    if (disposed || document.hidden || !root.isConnected || !allowed() || entry.loaded || !entry.sources.length) return;
+    entry.loaded = true;
+    entry.video.preload = "metadata";
+    entry.sources.forEach(({ element, url }) => element.setAttribute("src", url));
+    setState(entry, "loading");
+    entry.video.load();
+  };
+  const update = (entry) => {
+    if (disposed) return;
+    if (!allowed()) {
+      if (entry.loaded) release(entry);
+      else pause(entry);
       return;
     }
-
-    const activeEntry = entries.find(({ trigger }) => trigger.isActive);
-    if (activeEntry) playVideo(activeEntry.video);
+    if (entry.near || entry.wanted) hydrate(entry);
+    if (!entry.wanted || document.hidden || !root.isConnected) {
+      pause(entry);
+      return;
+    }
+    if (!entry.loaded || entry.pending || !entry.video.paused) return;
+    if (entry.feature) {
+      if (activeFeature && activeFeature !== entry) {
+        activeFeature.wanted = false;
+        pause(activeFeature);
+      }
+      activeFeature = entry;
+    }
+    const request = ++entry.request;
+    entry.pending = true;
+    Promise.resolve(entry.video.play()).then(() => {
+      if (disposed || request !== entry.request || !allowed() || !entry.wanted || document.hidden) {
+        entry.video.pause();
+      } else setState(entry, "playing");
+    }).catch(() => {
+      if (!disposed && request === entry.request) setState(entry, "ready");
+    }).finally(() => {
+      entry.pending = false;
+      // A stale play promise can settle after exit/re-entry; retry only for that race.
+      if (!disposed && request !== entry.request && entry.wanted && allowed() && !document.hidden) update(entry);
+    });
+  };
+  const byTarget = new Map();
+  const setWanted = (entry, wanted) => {
+    entry.wanted = wanted;
+    update(entry);
   };
 
-  mobileQuery.addEventListener("change", handleMobileChange);
-  if (mobileQuery.matches) pauseAll();
+  videos.forEach((video) => {
+    const card = video.closest(".home-feat-card, .home-feat_card");
+    const feature = video.hasAttribute("data-home-feat-video") && !!card;
+    const sources = [video, ...video.querySelectorAll("source")].map((element) => {
+      const url = element.getAttribute("data-src") || element.getAttribute("src");
+      if (!url) return null;
+      if (!element.hasAttribute("data-src")) element.setAttribute("data-src", url);
+      return { element, url };
+    }).filter(Boolean);
+    const entry = { video, feature, target: feature ? card : video, sources,
+      loaded: sources.some(({ element }) => element.hasAttribute("src")),
+      wanted: false, near: false, pending: false, request: 0, trigger: null };
+    video.autoplay = false;
+    video.removeAttribute("autoplay");
+    video.muted = true;
+    video.defaultMuted = true;
+    video.loop = true;
+    video.playsInline = true;
+    video.preload = "none";
+    video.setAttribute("muted", "");
+    video.setAttribute("playsinline", "");
+    video.pause();
+    setState(entry, "poster");
+    entry.ready = () => { if (!disposed && entry.loaded) setState(entry, video.paused ? "ready" : "playing"); };
+    entry.error = () => { if (!disposed && entry.loaded) setState(entry, "error"); };
+    video.addEventListener("loadeddata", entry.ready);
+    video.addEventListener("error", entry.error);
+    entries.push(entry);
+    const group = byTarget.get(entry.target) || [];
+    group.push(entry);
+    byTarget.set(entry.target, group);
+    // Preserve the feature-card activation range used by the existing design.
+    if (feature && ScrollTrigger) {
+      entry.trigger = ScrollTrigger.create({
+        trigger: card, start: "top 75%", end: "bottom 25%",
+        onToggle: (trigger) => setWanted(entry, trigger.isActive)
+      });
+      entry.wanted = entry.trigger.isActive;
+    }
+  });
 
-  return () => {
-    mobileQuery.removeEventListener("change", handleMobileChange);
-    entries.forEach(({ trigger }) => trigger.kill());
-    pauseAll();
+  if (typeof IntersectionObserver !== "undefined") {
+    warmObserver = new IntersectionObserver((records) => {
+      records.forEach((record) => (byTarget.get(record.target) || []).forEach((entry) => {
+        entry.near = record.isIntersecting;
+        update(entry);
+      }));
+    }, { rootMargin: "200px 0px" });
+    visibleObserver = new IntersectionObserver((records) => {
+      records.forEach((record) => (byTarget.get(record.target) || []).forEach((entry) => {
+        if (!entry.trigger) setWanted(entry, record.isIntersecting);
+      }));
+    });
+    byTarget.forEach((group, target) => {
+      warmObserver.observe(target);
+      if (group.some((entry) => !entry.trigger)) visibleObserver.observe(target);
+    });
+  } else if (ScrollTrigger) {
+    entries.filter((entry) => !entry.trigger).forEach((entry) => {
+      entry.trigger = ScrollTrigger.create({ trigger: entry.target, start: "top bottom", end: "bottom top",
+        onToggle: (trigger) => setWanted(entry, trigger.isActive) });
+      entry.wanted = entry.trigger.isActive;
+    });
+  }
+
+  const updateAll = () => entries.forEach(update);
+  const cleanup = () => {
+    if (disposed) return;
+    disposed = true;
+    warmObserver?.disconnect();
+    visibleObserver?.disconnect();
+    mobile.removeEventListener("change", updateAll);
+    reduced.removeEventListener("change", updateAll);
+    connection?.removeEventListener?.("change", updateAll);
+    document.removeEventListener("visibilitychange", updateAll);
+    signal?.removeEventListener("abort", cleanup);
+    entries.forEach((entry) => {
+      entry.trigger?.kill();
+      entry.video.removeEventListener("loadeddata", entry.ready);
+      entry.video.removeEventListener("error", entry.error);
+      release(entry);
+    });
+    flight3VideoRoots.delete(root);
   };
+  mobile.addEventListener("change", updateAll);
+  reduced.addEventListener("change", updateAll);
+  connection?.addEventListener?.("change", updateAll);
+  document.addEventListener("visibilitychange", updateAll);
+  signal?.addEventListener("abort", cleanup, { once: true });
+  flight3VideoRoots.set(root, cleanup);
+  updateAll();
+  return cleanup;
 }
 
 function initHomeHero({
@@ -1121,7 +1205,10 @@ function initHomeHero({
   }
 
   const cards = gsap.utils.toArray(".home-hero_vis-img", visualAnchor);
-  const headingText = gsap.utils.toArray(".home-disp_text, .home-disp_vis-alt", heading);
+  const headingText = gsap.utils.toArray(
+    ".home-disp_text, .home-disp_vis-alt",
+    heading,
+  );
   if (!cards.length) return undefined;
 
   gsap.registerPlugin(ScrollTrigger, SplitText);
@@ -1169,16 +1256,25 @@ function initHomeHero({
   }
 
   function wrapDistance(distance) {
-    return ((distance % layout.pathLength) + layout.pathLength) % layout.pathLength;
+    return (((distance % layout.pathLength) + layout.pathLength) % layout.pathLength);
   }
 
   function ringCoordinates(distance) {
-    const tablePosition = (wrapDistance(distance) / layout.pathLength) * PATH_SAMPLE_COUNT;
+    const tablePosition =
+      (wrapDistance(distance) / layout.pathLength) * PATH_SAMPLE_COUNT;
     const lowerIndex = Math.floor(tablePosition);
     const upperIndex = Math.min(lowerIndex + 1, PATH_SAMPLE_COUNT);
     const amount = tablePosition - lowerIndex;
-    const pointX = mix(layout.pathX[lowerIndex], layout.pathX[upperIndex], amount);
-    const pointY = mix(layout.pathY[lowerIndex], layout.pathY[upperIndex], amount);
+    const pointX = mix(
+      layout.pathX[lowerIndex],
+      layout.pathX[upperIndex],
+      amount,
+    );
+    const pointY = mix(
+      layout.pathY[lowerIndex],
+      layout.pathY[upperIndex],
+      amount,
+    );
     const bounds = layout.pathBounds;
     const normalizedX = (pointX - bounds.x) / bounds.width;
     const normalizedY = (pointY - bounds.y) / bounds.height;
@@ -1205,8 +1301,12 @@ function initHomeHero({
     layout.inlineGap = inlineGap;
     layout.anchorX = anchorRect.left - wrapRect.left;
     layout.anchorY = anchorRect.top - wrapRect.top;
-    layout.ringCard = mobile ? Math.min(Math.max(inlineCard * 1.28, 62), 88) : Math.min(Math.max(inlineCard * 1.38, 72), 104);
-    layout.ringWidth = mobile ? Math.min(width * 0.82, 340) : Math.min(500, width * 0.72);
+    layout.ringCard = mobile
+      ? Math.min(Math.max(inlineCard * 1.28, 62), 88)
+      : Math.min(Math.max(inlineCard * 1.38, 72), 104);
+    layout.ringWidth = mobile
+      ? Math.min(width * 0.82, 340)
+      : Math.min(500, width * 0.72);
     layout.ringHeight = layout.ringWidth * (320 / 500);
     layout.ringCenterX = width * 0.5 - wrapRect.left;
     layout.ringCenterY = height * (mobile ? 0.55 : 0.535);
@@ -1223,8 +1323,10 @@ function initHomeHero({
     layout.lineOverscan = mobile ? 0 : Math.max(width * 0.025, 24);
     layout.lineCard = mobile
       ? Math.min(Math.max(width * 0.22, 74), 100)
-      : (width + layout.lineOverscan * 2 - (cards.length - 1) * layout.lineGap) / cards.length;
-    layout.lineWidth = cards.length * layout.lineCard + (cards.length - 1) * layout.lineGap;
+      : (width + layout.lineOverscan * 2 -
+          (cards.length - 1) * layout.lineGap) / cards.length;
+    layout.lineWidth =
+      cards.length * layout.lineCard + (cards.length - 1) * layout.lineGap;
     layout.lineStartX = -wrapRect.left - layout.lineOverscan;
     layout.lineStep = layout.lineCard + layout.lineGap;
     layout.lineY = height * (mobile ? 0.59 : 0.545) - layout.lineCard / 2;
@@ -1316,18 +1418,23 @@ function initHomeHero({
     const lineEndCenterX = lineEnd.x + lineEnd.size / 2;
     const lineCenterY = lineStart.y + lineStart.size / 2;
 
-    const samples = Array.from({ length: UNWRAP_CURVE_SAMPLES + 1 }, (_, sample) => {
-      const t = sample / UNWRAP_CURVE_SAMPLES;
-      const distance = layout.headDistance - t * ((cards.length - 1) / cards.length) * layout.pathLength;
-      const ring = ringStateAtDistance(distance);
-      return {
-        sourceX: ring.x + ring.size / 2,
-        sourceY: ring.y + ring.size / 2,
-        sourceSize: ring.size,
-        sourceZ: ring.z,
-        sourceZIndex: ring.zIndex,
-      };
-    });
+    const samples = Array.from(
+      { length: UNWRAP_CURVE_SAMPLES + 1 },
+      (_, sample) => {
+        const t = sample / UNWRAP_CURVE_SAMPLES;
+        const distance =
+          layout.headDistance -
+          t * ((cards.length - 1) / cards.length) * layout.pathLength;
+        const ring = ringStateAtDistance(distance);
+        return {
+          sourceX: ring.x + ring.size / 2,
+          sourceY: ring.y + ring.size / 2,
+          sourceSize: ring.size,
+          sourceZ: ring.z,
+          sourceZIndex: ring.zIndex,
+        };
+      },
+    );
 
     let sourceDistance = 0;
     samples[0].sourceDistance = 0;
@@ -1367,11 +1474,17 @@ function initHomeHero({
     output.sourceY = mix(previous.sourceY, next.sourceY, amount);
     output.sourceSize = mix(previous.sourceSize, next.sourceSize, amount);
     output.sourceZ = mix(previous.sourceZ, next.sourceZ, amount);
-    output.sourceZIndex = amount < 0.5 ? previous.sourceZIndex : next.sourceZIndex;
+    output.sourceZIndex =
+      amount < 0.5 ? previous.sourceZIndex : next.sourceZIndex;
     return output;
   }
 
-  function sampleLookupAtDistance(lookupCount, totalLength, distance, output) {
+  function sampleLookupAtDistance(
+    lookupCount,
+    totalLength,
+    distance,
+    output,
+  ) {
     const target = Math.min(Math.max(distance, 0), totalLength);
     let low = 0;
     let high = lookupCount - 1;
@@ -1383,14 +1496,37 @@ function initHomeHero({
     }
 
     const previousIndex = Math.max(0, low - 1);
-    const span = unwrapLookup.distance[low] - unwrapLookup.distance[previousIndex];
-    const amount = span > 0 ? (target - unwrapLookup.distance[previousIndex]) / span : 0;
+    const span =
+      unwrapLookup.distance[low] - unwrapLookup.distance[previousIndex];
+    const amount =
+      span > 0
+        ? (target - unwrapLookup.distance[previousIndex]) / span
+        : 0;
 
-    output.centerX = mix(unwrapLookup.x[previousIndex], unwrapLookup.x[low], amount);
-    output.centerY = mix(unwrapLookup.y[previousIndex], unwrapLookup.y[low], amount);
-    output.size = mix(unwrapLookup.size[previousIndex], unwrapLookup.size[low], amount);
-    output.z = mix(unwrapLookup.z[previousIndex], unwrapLookup.z[low], amount);
-    output.zIndex = amount < 0.5 ? unwrapLookup.zIndex[previousIndex] : unwrapLookup.zIndex[low];
+    output.centerX = mix(
+      unwrapLookup.x[previousIndex],
+      unwrapLookup.x[low],
+      amount,
+    );
+    output.centerY = mix(
+      unwrapLookup.y[previousIndex],
+      unwrapLookup.y[low],
+      amount,
+    );
+    output.size = mix(
+      unwrapLookup.size[previousIndex],
+      unwrapLookup.size[low],
+      amount,
+    );
+    output.z = mix(
+      unwrapLookup.z[previousIndex],
+      unwrapLookup.z[low],
+      amount,
+    );
+    output.zIndex =
+      amount < 0.5
+        ? unwrapLookup.zIndex[previousIndex]
+        : unwrapLookup.zIndex[low];
     return output;
   }
 
@@ -1402,12 +1538,25 @@ function initHomeHero({
     // Keep the moving oval and card enlargement proportional to scroll.
     const geometryProgress = unwrapProgress;
     const sourceStart = layout.unwrapSourceSamples[0];
-    const strandStartX = mix(sourceStart.sourceX, layout.unwrapTargetStartX, geometryProgress);
-    const strandY = mix(sourceStart.sourceY, layout.unwrapTargetY, geometryProgress);
+    const strandStartX = mix(
+      sourceStart.sourceX,
+      layout.unwrapTargetStartX,
+      geometryProgress,
+    );
+    const strandY = mix(
+      sourceStart.sourceY,
+      layout.unwrapTargetY,
+      geometryProgress,
+    );
     const releasedLength = layout.unwrapTargetLength * unwrapProgress;
     const contactX = strandStartX + releasedLength;
-    const remainingSourceLength = layout.unwrapSourceLength * (1 - unwrapProgress);
-    const lineSize = mix(sourceStart.sourceSize, layout.lineCard, geometryProgress);
+    const remainingSourceLength =
+      layout.unwrapSourceLength * (1 - unwrapProgress);
+    const lineSize = mix(
+      sourceStart.sourceSize,
+      layout.lineCard,
+      geometryProgress,
+    );
 
     function addLookupPoint(centerX, centerY, size, z, zIndex) {
       if (lookupCount > 0) {
@@ -1446,8 +1595,12 @@ function initHomeHero({
     if (remainingSourceLength > 0.001) {
       const curveSamples = UNWRAP_CURVE_SAMPLES;
       for (let index = 1; index <= curveSamples; index += 1) {
-        const sourceDistance = (index / curveSamples) * remainingSourceLength;
-        const source = sampleUnwrapSource(sourceDistance, unwrapSourceScratch);
+        const sourceDistance =
+          (index / curveSamples) * remainingSourceLength;
+        const source = sampleUnwrapSource(
+          sourceDistance,
+          unwrapSourceScratch,
+        );
         addLookupPoint(
           contactX + source.sourceX - sourceStart.sourceX,
           strandY + source.sourceY - sourceStart.sourceY,
@@ -1459,12 +1612,28 @@ function initHomeHero({
     }
 
     cards.forEach((_, index) => {
-      const distance = cards.length > 1 ? (index / (cards.length - 1)) * totalLength : 0;
-      const current = sampleLookupAtDistance(lookupCount, totalLength, distance, unwrapStates[index]);
-      const targetCenterX = layout.lineStartX + index * layout.lineStep + layout.lineCard / 2;
+      const distance =
+        cards.length > 1
+          ? (index / (cards.length - 1)) * totalLength
+          : 0;
+      const current = sampleLookupAtDistance(
+        lookupCount,
+        totalLength,
+        distance,
+        unwrapStates[index],
+      );
+      const targetCenterX =
+        layout.lineStartX + index * layout.lineStep + layout.lineCard / 2;
       const targetCenterY = layout.lineY + layout.lineCard / 2;
-      const landingStart = cards.length > 1 ? (index / (cards.length - 1)) * (1 - LANDING_BLEND_SPAN) : 0;
-      const landingProgress = smootherstep(landingStart, landingStart + LANDING_BLEND_SPAN, unwrapProgress);
+      const landingStart =
+        cards.length > 1
+          ? (index / (cards.length - 1)) * (1 - LANDING_BLEND_SPAN)
+          : 0;
+      const landingProgress = smootherstep(
+        landingStart,
+        landingStart + LANDING_BLEND_SPAN,
+        unwrapProgress,
+      );
 
       current.centerX = mix(current.centerX, targetCenterX, landingProgress);
       current.centerY = mix(current.centerY, targetCenterY, landingProgress);
@@ -1485,7 +1654,9 @@ function initHomeHero({
     const style = cardStyles[index];
 
     /* Keep the supplied one-write transform composition on the hot path. */
-    style.transform = `translate3d(${x.toFixed(3)}px, ${y.toFixed(3)}px, ` + `${cardState.z.toFixed(3)}px) scale(${scale.toFixed(5)})`;
+    style.transform =
+      `translate3d(${x.toFixed(3)}px, ${y.toFixed(3)}px, ` +
+      `${cardState.z.toFixed(3)}px) scale(${scale.toFixed(5)})`;
 
     if (lastZIndexes[index] !== cardState.zIndex) {
       style.zIndex = String(cardState.zIndex);
@@ -1496,14 +1667,21 @@ function initHomeHero({
   function render() {
     const progress = state.progress;
     const openingProgress = clamp01(progress / OPEN_END);
-    const rotationProgress = clamp01((progress - ROTATION_START) / (LOOP_END - ROTATION_START));
+    const rotationProgress = clamp01(
+      (progress - ROTATION_START) / (LOOP_END - ROTATION_START),
+    );
     const unwrapProgress = clamp01((progress - LOOP_END) / (1 - LOOP_END));
-    const unwrapStates = progress > LOOP_END ? buildUnwrapStates(unwrapProgress) : null;
+    const unwrapStates =
+      progress > LOOP_END ? buildUnwrapStates(unwrapProgress) : null;
 
     cards.forEach((_, index) => {
       let current;
       if (progress <= OPEN_END) {
-        current = interpolateState(initialState(index), ringState(index, rotationProgress), openingProgress);
+        current = interpolateState(
+          initialState(index),
+          ringState(index, rotationProgress),
+          openingProgress,
+        );
       } else if (progress <= LOOP_END) {
         current = ringState(index, rotationProgress);
       } else {
@@ -1553,30 +1731,22 @@ function initHomeHero({
     timeline
       .to(state, { progress: 1, duration: 1, ease: "none", onUpdate: render }, 0)
       .to(headingText, { opacity: 0, duration: 0.17, ease: "none" }, 0.45)
-      .to(
-        copySplit.chars,
-        {
-          opacity: 1,
-          duration: 0.27,
-          stagger: { each: 0.00125 },
-          ease: "none",
-        },
-        0.55,
-      );
+      .to(copySplit.chars, {
+        opacity: 1,
+        duration: 0.27,
+        stagger: { each: 0.00125 },
+        ease: "none",
+      }, 0.55);
 
     if (backgroundElement) {
-      timeline.to(
-        backgroundElement,
-        {
-          opacity: 0.15,
-          yPercent: 0,
-          filter: "blur(0px)",
-          rotation: -18,
-          duration: 1,
-          ease: "none",
-        },
-        0.25,
-      );
+      timeline.to(backgroundElement, {
+        opacity: 0.15,
+        yPercent: 0,
+        filter: "blur(0px)",
+        rotation: -18,
+        duration: 1,
+        ease: "none",
+      }, 0.25);
     }
 
     render();
@@ -1591,7 +1761,7 @@ function initHomeHero({
       gsap.set(copy, { clearProps: "opacity" });
       if (backgroundElement) {
         gsap.set(backgroundElement, {
-          clearProps: "filter,opacity,transform",
+          clearProps: "filter,opacity,transform"
         });
       }
     };
@@ -1628,48 +1798,41 @@ function initHomeHero({
       },
     });
 
-    const mobileVisualTween =
-      secondWrap && mobileVisual
-        ? gsap.fromTo(
-            mobileVisual,
-            { xPercent: 0 },
-            {
-              xPercent: -80,
-              ease: "none",
-              scrollTrigger: {
-                trigger: secondWrap,
-                start: "top bottom",
-                end: "bottom top",
-                scrub: true,
-                invalidateOnRefresh: true,
-              },
+    const mobileVisualTween = secondWrap && mobileVisual
+      ? gsap.fromTo(
+          mobileVisual,
+          { xPercent: 0 },
+          {
+            xPercent: -80,
+            ease: "none",
+            scrollTrigger: {
+              trigger: secondWrap,
+              start: "top bottom",
+              end: "bottom top",
+              scrub: true,
+              invalidateOnRefresh: true,
             },
-          )
-        : null;
+          },
+        )
+      : null;
 
-    timeline.to(headingText, { opacity: 0, duration: 0.2, ease: "none" }, 0.43).to(
-      copySplit.chars,
-      {
+    timeline
+      .to(headingText, { opacity: 0, duration: 0.2, ease: "none" }, 0.43)
+      .to(copySplit.chars, {
         opacity: 1,
         duration: 0.28,
         stagger: { each: 0.00125 },
         ease: "none",
-      },
-      0.56,
-    );
+      }, 0.56);
 
     if (backgroundElement) {
-      timeline.to(
-        backgroundElement,
-        {
-          opacity: 0.15,
-          yPercent: 0,
-          rotation: -18,
-          duration: 1.5,
-          ease: "none",
-        },
-        0.15,
-      );
+      timeline.to(backgroundElement, {
+        opacity: 0.15,
+        yPercent: 0,
+        rotation: -18,
+        duration: 1.5,
+        ease: "none",
+      }, 0.15);
     }
 
     return () => {
@@ -1694,7 +1857,6 @@ function initHomeHero({
   section.__homeHeroCleanup = cleanup;
   return cleanup;
 }
-
 function initInteractiveCollages({ root, signal, gsap }) {
   const roots = root.querySelectorAll("[data-interactive-collage-init]");
   if (!roots.length) return;
@@ -1710,18 +1872,23 @@ function initInteractiveCollages({ root, signal, gsap }) {
     collageRoot._interactiveCollageAbort?.abort();
 
     const list = collageRoot.querySelector("[data-interactive-collage-list]");
-    const items = Array.from(list?.querySelectorAll("[data-interactive-collage-item]") || []);
+    const items = Array.from(
+      list?.querySelectorAll("[data-interactive-collage-item]") || []
+    );
 
     if (!list || !items.length) return;
 
-    const visuals = items.map((item) => item.querySelector("[data-interactive-collage-item-inner]") || item);
+    const visuals = items.map(
+      (item) =>
+        item.querySelector("[data-interactive-collage-item-inner]") || item
+    );
     const restStates = visuals.map(() => ({ xPercent: 0, yPercent: 0, rotation: 0 }));
     const media = gsap.matchMedia();
 
     const randomRestState = () => ({
       xPercent: gsap.utils.random(-10, 10),
       yPercent: gsap.utils.random(-10, 10),
-      rotation: gsap.utils.random(-15, 15),
+      rotation: gsap.utils.random(-15, 15)
     });
 
     const getColumnCount = () => {
@@ -1732,14 +1899,16 @@ function initInteractiveCollages({ root, signal, gsap }) {
       }
 
       const firstTop = items[0]?.offsetTop;
-      const firstRowCount = items.findIndex((item) => Math.abs(item.offsetTop - firstTop) > 1);
+      const firstRowCount = items.findIndex(
+        (item) => Math.abs(item.offsetTop - firstTop) > 1
+      );
       return firstRowCount > 0 ? firstRowCount : items.length;
     };
 
     media.add(
       {
         allowMotion: "(prefers-reduced-motion: no-preference)",
-        finePointer: "(hover: hover) and (pointer: fine)",
+        finePointer: "(hover: hover) and (pointer: fine)"
       },
       (context) => {
         if (!context.conditions.allowMotion) return;
@@ -1752,7 +1921,7 @@ function initInteractiveCollages({ root, signal, gsap }) {
         let pointerFrame = 0;
 
         signal.addEventListener("abort", () => controller.abort(), {
-          once: true,
+          once: true
         });
         collageRoot._interactiveCollageAbort = controller;
 
@@ -1761,7 +1930,7 @@ function initInteractiveCollages({ root, signal, gsap }) {
             ...vars,
             duration: DURATION,
             ease: EASE,
-            overwrite: "auto",
+            overwrite: "auto"
           });
         };
 
@@ -1777,7 +1946,7 @@ function initInteractiveCollages({ root, signal, gsap }) {
             const rest = randomize ? assignRestState(index) : restStates[index];
             animateVisual(index, {
               ...rest,
-              scale: REST_SCALE,
+              scale: REST_SCALE
             });
           });
         };
@@ -1800,7 +1969,7 @@ function initInteractiveCollages({ root, signal, gsap }) {
                 xPercent: 0,
                 yPercent: 0,
                 rotation: 0,
-                scale: ACTIVE_SCALE,
+                scale: ACTIVE_SCALE
               });
               return;
             }
@@ -1815,7 +1984,7 @@ function initInteractiveCollages({ root, signal, gsap }) {
               xPercent: (PUSH_FORCE * deltaX) / distanceSquared,
               yPercent: (PUSH_FORCE * deltaY) / distanceSquared,
               rotation: restStates[index].rotation,
-              scale: REST_SCALE,
+              scale: REST_SCALE
             });
           });
         };
@@ -1845,7 +2014,7 @@ function initInteractiveCollages({ root, signal, gsap }) {
             ...rest,
             scale: REST_SCALE,
             transformOrigin: "50% 50%",
-            willChange: "transform",
+            willChange: "transform"
           });
         });
 
@@ -1862,10 +2031,14 @@ function initInteractiveCollages({ root, signal, gsap }) {
                 activate(findClosestIndex());
               });
             },
-            { signal: collageSignal, passive: true },
+            { signal: collageSignal, passive: true }
           );
 
-          list.addEventListener("pointerleave", () => resetAll(), { signal: collageSignal });
+          list.addEventListener(
+            "pointerleave",
+            () => resetAll(),
+            { signal: collageSignal }
+          );
         } else {
           items.forEach((item, index) => {
             item.addEventListener(
@@ -1875,7 +2048,7 @@ function initInteractiveCollages({ root, signal, gsap }) {
                 if (currentIndex === index) resetAll();
                 else activate(index);
               },
-              { signal: collageSignal },
+              { signal: collageSignal }
             );
           });
 
@@ -1884,7 +2057,7 @@ function initInteractiveCollages({ root, signal, gsap }) {
             (event) => {
               if (!collageRoot.contains(event.target)) resetAll();
             },
-            { signal: collageSignal },
+            { signal: collageSignal }
           );
         }
 
@@ -1903,7 +2076,7 @@ function initInteractiveCollages({ root, signal, gsap }) {
           });
           currentIndex = -1;
         };
-      },
+      }
     );
 
     cleanups.push(() => media.revert());
@@ -1924,12 +2097,14 @@ const IMAGE_TRAIL_DEFAULTS = Object.freeze({
   rotationRange: [-10, 10],
   entranceEase: "back.out(2)",
   exitEase: "power2.in",
-  maxActiveImages: 6,
+  maxActiveImages: 6
 });
 
 let activeImageTrails = [];
 let lastImageTrailContext = null;
-const imageTrailReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+const imageTrailReducedMotion = window.matchMedia(
+  "(prefers-reduced-motion: reduce)"
+);
 
 class Flight3ImageTrail {
   constructor(container, options, gsap) {
@@ -1948,7 +2123,9 @@ class Flight3ImageTrail {
   }
 
   init() {
-    this.trailContainer = this.container.querySelector(".image_trail_container");
+    this.trailContainer = this.container.querySelector(
+      ".image_trail_container"
+    );
     this.gallery = this.container.querySelector(".image_trail_gallery");
 
     if (!this.trailContainer || !this.gallery) return;
@@ -1967,14 +2144,17 @@ class Flight3ImageTrail {
       (event) => {
         this.createImageTrail(event);
       },
-      { signal: this.controller.signal, passive: true },
+      { signal: this.controller.signal, passive: true }
     );
   }
 
   createImageTrail(event) {
     const dx = event.clientX - this.lastMousePos.x;
     const dy = event.clientY - this.lastMousePos.y;
-    const distance = Math.hypot(dx, dy);
+    const distance = Math.hypot(
+      dx,
+      dy
+    );
 
     if (distance < this.options.movementThreshold) return;
 
@@ -1994,9 +2174,11 @@ class Flight3ImageTrail {
     const image = sourceImage.cloneNode(true);
     image.classList.add("image_trail_item");
 
-    this.currentImageIndex = (this.currentImageIndex + 1) % this.images.length;
+    this.currentImageIndex =
+      (this.currentImageIndex + 1) % this.images.length;
 
-    const hasNaturalSize = sourceImage.naturalWidth > 0 && sourceImage.naturalHeight > 0;
+    const hasNaturalSize =
+      sourceImage.naturalWidth > 0 && sourceImage.naturalHeight > 0;
     const aspectRatio = hasNaturalSize
       ? sourceImage.naturalWidth / sourceImage.naturalHeight
       : this.options.imageWidth / this.options.imageHeight;
@@ -2012,21 +2194,29 @@ class Flight3ImageTrail {
       height: imageHeight,
       x: event.clientX - imageWidth / 2,
       y: event.clientY - imageHeight / 2,
-      force3D: true,
+      force3D: true
     });
 
     const rotation = this.options.rotationEnabled
-      ? this.gsap.utils.random(this.options.rotationRange[0], this.options.rotationRange[1])
+      ? this.gsap.utils.random(
+          this.options.rotationRange[0],
+          this.options.rotationRange[1]
+        )
       : 0;
     const entranceLegDuration =
-      this.options.exitDelay > 0 ? Math.min(this.options.entranceDuration, this.options.exitDelay) : this.options.entranceDuration;
-    const holdDuration = Math.max(0, this.options.exitDelay - this.options.entranceDuration);
+      this.options.exitDelay > 0
+        ? Math.min(this.options.entranceDuration, this.options.exitDelay)
+        : this.options.entranceDuration;
+    const holdDuration = Math.max(
+      0,
+      this.options.exitDelay - this.options.entranceDuration
+    );
 
     const timeline = this.gsap.timeline({
       onComplete: () => {
         image.remove();
         this.activeTrails.delete(image);
-      },
+      }
     });
     timeline
       .fromTo(
@@ -2036,17 +2226,17 @@ class Flight3ImageTrail {
           autoAlpha: 1,
           scale: 1,
           duration: entranceLegDuration,
-          ease: this.options.entranceEase,
-        },
+          ease: this.options.entranceEase
+        }
       )
       .to(
         image,
         {
           scale: 0,
           duration: this.options.exitDuration,
-          ease: this.options.exitEase,
+          ease: this.options.exitEase
         },
-        `>+=${holdDuration}`,
+        `>+=${holdDuration}`
       );
 
     this.activeTrails.set(image, timeline);
@@ -2079,18 +2269,24 @@ function imageTrailDisabled(element) {
     desktop: "(min-width: 992px)",
     tablet: "(min-width: 768px) and (max-width: 991px)",
     landscape: "(orientation: landscape) and (max-width: 767px)",
-    mobile: "(max-width: 479px)",
+    mobile: "(max-width: 479px)"
   };
   return value
     .split(",")
     .map((entry) => entry.trim())
-    .some((viewport) => (queries[viewport] ? window.matchMedia(queries[viewport]).matches : false));
+    .some((viewport) =>
+      queries[viewport] ? window.matchMedia(queries[viewport]).matches : false
+    );
 }
 
 function imageTrailRotationRange(container) {
   try {
     const range = JSON.parse(container.dataset.anmRotationRange || "null");
-    if (Array.isArray(range) && range.length === 2 && range.every((entry) => Number.isFinite(Number(entry)))) {
+    if (
+      Array.isArray(range) &&
+      range.length === 2 &&
+      range.every((entry) => Number.isFinite(Number(entry)))
+    ) {
       return range.map(Number);
     }
   } catch (error) {
@@ -2110,7 +2306,10 @@ function buildImageTrails(context) {
   const containers = Array.from(root.querySelectorAll("[data-anm-image-trail]"));
   if (!containers.length) return;
 
-  const touch = "ontouchstart" in window || navigator.maxTouchPoints > 0 || window.matchMedia("(hover: none)").matches;
+  const touch =
+    "ontouchstart" in window ||
+    navigator.maxTouchPoints > 0 ||
+    window.matchMedia("(hover: none)").matches;
   if (touch || imageTrailReducedMotion.matches) {
     return;
   }
@@ -2119,18 +2318,36 @@ function buildImageTrails(context) {
     if (imageTrailDisabled(container)) return;
 
     const config = {
-      movementThreshold: parseFloat(container.dataset.anmMovementThreshold) || IMAGE_TRAIL_DEFAULTS.movementThreshold,
-      delayBetween: parseFloat(container.dataset.anmDelayBetween) || IMAGE_TRAIL_DEFAULTS.delayBetween,
-      imageWidth: parseFloat(container.dataset.anmImageWidth) || IMAGE_TRAIL_DEFAULTS.imageWidth,
-      imageHeight: parseFloat(container.dataset.anmImageHeight) || IMAGE_TRAIL_DEFAULTS.imageHeight,
-      entranceDuration: parseFloat(container.dataset.anmEntranceDuration) || IMAGE_TRAIL_DEFAULTS.entranceDuration,
-      exitDuration: parseFloat(container.dataset.anmExitDuration) || IMAGE_TRAIL_DEFAULTS.exitDuration,
-      exitDelay: parseFloat(container.dataset.anmExitDelay) || IMAGE_TRAIL_DEFAULTS.exitDelay,
+      movementThreshold:
+        parseFloat(container.dataset.anmMovementThreshold) ||
+        IMAGE_TRAIL_DEFAULTS.movementThreshold,
+      delayBetween:
+        parseFloat(container.dataset.anmDelayBetween) ||
+        IMAGE_TRAIL_DEFAULTS.delayBetween,
+      imageWidth:
+        parseFloat(container.dataset.anmImageWidth) ||
+        IMAGE_TRAIL_DEFAULTS.imageWidth,
+      imageHeight:
+        parseFloat(container.dataset.anmImageHeight) ||
+        IMAGE_TRAIL_DEFAULTS.imageHeight,
+      entranceDuration:
+        parseFloat(container.dataset.anmEntranceDuration) ||
+        IMAGE_TRAIL_DEFAULTS.entranceDuration,
+      exitDuration:
+        parseFloat(container.dataset.anmExitDuration) ||
+        IMAGE_TRAIL_DEFAULTS.exitDuration,
+      exitDelay:
+        parseFloat(container.dataset.anmExitDelay) ||
+        IMAGE_TRAIL_DEFAULTS.exitDelay,
       rotationEnabled: container.dataset.anmRotationEnabled !== "false",
       rotationRange: imageTrailRotationRange(container),
-      entranceEase: container.dataset.anmEntranceEase || IMAGE_TRAIL_DEFAULTS.entranceEase,
-      exitEase: container.dataset.anmExitEase || IMAGE_TRAIL_DEFAULTS.exitEase,
-      maxActiveImages: parseInt(container.dataset.anmMaxActiveImages, 10) || IMAGE_TRAIL_DEFAULTS.maxActiveImages,
+      entranceEase:
+        container.dataset.anmEntranceEase || IMAGE_TRAIL_DEFAULTS.entranceEase,
+      exitEase:
+        container.dataset.anmExitEase || IMAGE_TRAIL_DEFAULTS.exitEase,
+      maxActiveImages:
+        parseInt(container.dataset.anmMaxActiveImages, 10) ||
+        IMAGE_TRAIL_DEFAULTS.maxActiveImages
     };
 
     const instance = new Flight3ImageTrail(container, config, gsap);
@@ -2140,6 +2357,7 @@ function buildImageTrails(context) {
       instance.destroy();
     }
   });
+
 }
 
 function mountImageTrails(context) {
@@ -2151,7 +2369,7 @@ function mountImageTrails(context) {
     () => {
       if (lastImageTrailContext === context) buildImageTrails(context);
     },
-    { signal: context.signal },
+    { signal: context.signal }
   );
 
   return () => {
@@ -2170,13 +2388,15 @@ window.Anm.ImageTrail = {
   refresh() {
     if (lastImageTrailContext) buildImageTrails(lastImageTrailContext);
   },
-  destroy: destroyImageTrail,
+  destroy: destroyImageTrail
 };
 
 function initCmsPrevNext({ root }) {
   const SOURCE_SELECTOR = "[r-prevnext-source], [np-articles-source]";
   const pageRoot = root.closest("[data-page]") || root;
-  const current = pageRoot.querySelector("[r-prevnext-source] .w--current, [np-articles-source] .w--current");
+  const current = pageRoot.querySelector(
+    "[r-prevnext-source] .w--current, [np-articles-source] .w--current"
+  );
   if (!current) return;
 
   const source = current.closest(SOURCE_SELECTOR);
@@ -2187,8 +2407,10 @@ function initCmsPrevNext({ root }) {
   const findSiblingLink = (sibling) => sibling?.querySelector?.("a") || null;
   const firstLink = findSiblingLink(itemsList.firstElementChild);
   const lastLink = findSiblingLink(itemsList.lastElementChild);
-  const nextLink = findSiblingLink(currentItem.nextElementSibling) || firstLink;
-  const previousLink = findSiblingLink(currentItem.previousElementSibling) || lastLink;
+  const nextLink =
+    findSiblingLink(currentItem.nextElementSibling) || firstLink;
+  const previousLink =
+    findSiblingLink(currentItem.previousElementSibling) || lastLink;
 
   const linkData = (link) => {
     if (!link) return { href: "", title: "", imageSrc: "" };
@@ -2196,7 +2418,7 @@ function initCmsPrevNext({ root }) {
     return {
       href: link.getAttribute("href") || "",
       title: link.innerText || link.textContent || "",
-      imageSrc: image?.getAttribute("src") || "",
+      imageSrc: image?.getAttribute("src") || ""
     };
   };
 
@@ -2206,33 +2428,33 @@ function initCmsPrevNext({ root }) {
     {
       selectors: "[r-prevnext-next-btn], [np-articles-next-btn]",
       attribute: "href",
-      value: next.href,
+      value: next.href
     },
     {
       selectors: "[r-prevnext-next-text], [np-articles-next-text]",
       property: "innerText",
-      value: next.title,
+      value: next.title
     },
     {
       selectors: "[r-prevnext-prev-btn], [np-articles-prev-btn]",
       attribute: "href",
-      value: previous.href,
+      value: previous.href
     },
     {
       selectors: "[r-prevnext-prev-text], [np-articles-prev-text]",
       property: "innerText",
-      value: previous.title,
+      value: previous.title
     },
     {
       selectors: "[r-prevnext-prev-img], [np-articles-prev-img]",
       attribute: "src",
-      value: previous.imageSrc,
+      value: previous.imageSrc
     },
     {
       selectors: "[r-prevnext-next-img], [np-articles-next-img]",
       attribute: "src",
-      value: next.imageSrc,
-    },
+      value: next.imageSrc
+    }
   ];
 
   bindings.forEach(({ selectors, attribute, property, value }) => {
@@ -2245,15 +2467,20 @@ function initCmsPrevNext({ root }) {
 }
 
 function initCaseStudyReels({ root, signal }) {
-  const isAutomaticVideo = (video) => video instanceof HTMLVideoElement && !video.closest("[data-video-player]");
+  const isAutomaticVideo = (video) => video instanceof HTMLVideoElement &&
+    !video.closest("[data-video-player]");
   const mobileQuery = window.matchMedia("(max-width: 767px)");
   const hoverQuery = window.matchMedia("(hover: hover) and (pointer: fine)");
   const groups = Array.from(root.querySelectorAll("[data-cs-reel-group]"));
-  const mainReels = Array.from(root.querySelectorAll("[data-cs-main-reel]")).filter(isAutomaticVideo);
+  const mainReels = Array.from(
+    root.querySelectorAll("[data-cs-main-reel]")
+  ).filter(isAutomaticVideo);
 
   if (!groups.length && !mainReels.length) return;
 
-  const allVideos = Array.from(root.querySelectorAll("[data-cs-reel], [data-cs-main-reel]")).filter(isAutomaticVideo);
+  const allVideos = Array.from(
+    root.querySelectorAll("[data-cs-reel], [data-cs-main-reel]")
+  ).filter(isAutomaticVideo);
   let reelObserver = null;
   let mainReelObserver = null;
   let runController = null;
@@ -2331,7 +2558,7 @@ function initCaseStudyReels({ root, signal }) {
     } else {
       video.addEventListener("loadedmetadata", setFirstFrame, {
         once: true,
-        signal: runSignal,
+        signal: runSignal
       });
     }
   };
@@ -2346,7 +2573,9 @@ function initCaseStudyReels({ root, signal }) {
   const initGroupedReels = (runSignal) => {
     const groupEntries = groups
       .map((group) => ({
-        videos: Array.from(group.querySelectorAll("[data-cs-reel]")).filter(isAutomaticVideo),
+        videos: Array.from(group.querySelectorAll("[data-cs-reel]")).filter(
+          isAutomaticVideo
+        )
       }))
       .filter(({ videos }) => videos.length);
 
@@ -2377,10 +2606,10 @@ function initCaseStudyReels({ root, signal }) {
           };
 
           video.addEventListener("mouseenter", handleEnter, {
-            signal: runSignal,
+            signal: runSignal
           });
           video.addEventListener("mouseleave", handleLeave, {
-            signal: runSignal,
+            signal: runSignal
           });
         });
       });
@@ -2397,7 +2626,10 @@ function initCaseStudyReels({ root, signal }) {
     reelObserver = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
-          visibility.set(entry.target, entry.isIntersecting ? entry.intersectionRatio : 0);
+          visibility.set(
+            entry.target,
+            entry.isIntersecting ? entry.intersectionRatio : 0
+          );
         });
 
         groupEntries.forEach(({ videos }) => {
@@ -2412,7 +2644,7 @@ function initCaseStudyReels({ root, signal }) {
           });
         });
       },
-      { threshold: [0, 0.5, 0.6, 0.75, 1] },
+      { threshold: [0, 0.5, 0.6, 0.75, 1] }
     );
 
     groupEntries.forEach(({ videos }) => {
@@ -2444,8 +2676,8 @@ function initCaseStudyReels({ root, signal }) {
       },
       {
         rootMargin: "-25% 0px -25% 0px",
-        threshold: 0,
-      },
+        threshold: 0
+      }
     );
 
     mainReels.forEach((video) => mainReelObserver.observe(video));
@@ -2474,7 +2706,9 @@ function initCaseStudyReels({ root, signal }) {
 }
 
 function initCaseStudyVideoPlayers({ root, signal }) {
-  const players = Array.from(root.querySelectorAll("[data-video-player]")).filter((player) => !player.closest("#videoModal"));
+  const players = Array.from(root.querySelectorAll("[data-video-player]")).filter(
+    (player) => !player.closest("#videoModal")
+  );
   if (!players.length) return;
 
   const cleanupTasks = [];
@@ -2485,7 +2719,10 @@ function initCaseStudyVideoPlayers({ root, signal }) {
 
     const playButton = player.querySelector('[data-video-control="play"]');
     const muteButton = player.querySelector('[data-video-control="mute"]');
-    const source = videoPlayer.getAttribute("data-video-src") || videoPlayer.getAttribute("src") || "";
+    const source =
+      videoPlayer.getAttribute("data-video-src") ||
+      videoPlayer.getAttribute("src") ||
+      "";
     const hadSource = videoPlayer.hasAttribute("src");
 
     if (source) videoPlayer.setAttribute("data-video-src", source);
@@ -2497,14 +2734,26 @@ function initCaseStudyVideoPlayers({ root, signal }) {
       const isMuted = videoPlayer.muted;
 
       if (playButton) {
-        playButton.setAttribute("aria-label", isPlaying ? "Pause video" : "Play video");
-        playButton.setAttribute("data-video-state", isPlaying ? "playing" : "paused");
+        playButton.setAttribute(
+          "aria-label",
+          isPlaying ? "Pause video" : "Play video"
+        );
+        playButton.setAttribute(
+          "data-video-state",
+          isPlaying ? "playing" : "paused"
+        );
       }
 
       if (muteButton) {
-        muteButton.setAttribute("aria-label", isMuted ? "Unmute video" : "Mute video");
+        muteButton.setAttribute(
+          "aria-label",
+          isMuted ? "Unmute video" : "Mute video"
+        );
         muteButton.setAttribute("aria-pressed", String(isMuted));
-        muteButton.setAttribute("data-video-state", isMuted ? "muted" : "unmuted");
+        muteButton.setAttribute(
+          "data-video-state",
+          isMuted ? "muted" : "unmuted"
+        );
       }
     };
 
@@ -2570,7 +2819,10 @@ function initFilterBasic({ root = document, signal } = {}) {
     if (!buttons.length || !items.length) return;
 
     const updateStatus = (element, shouldBeActive) => {
-      element.setAttribute("data-filter-status", shouldBeActive ? "active" : "not-active");
+      element.setAttribute(
+        "data-filter-status",
+        shouldBeActive ? "active" : "not-active"
+      );
       element.setAttribute("aria-hidden", shouldBeActive ? "false" : "true");
     };
 
@@ -2586,13 +2838,17 @@ function initFilterBasic({ root = document, signal } = {}) {
 
       buttons.forEach((button) => {
         const isActive = button.getAttribute("data-filter-target") === target;
-        button.setAttribute("data-filter-status", isActive ? "active" : "not-active");
+        button.setAttribute(
+          "data-filter-status",
+          isActive ? "active" : "not-active"
+        );
         button.setAttribute("aria-pressed", String(isActive));
       });
 
       transitionTimer = window.setTimeout(() => {
         items.forEach((item) => {
-          const shouldBeActive = target === "all" || item.getAttribute("data-filter-name") === target;
+          const shouldBeActive =
+            target === "all" || item.getAttribute("data-filter-name") === target;
           updateStatus(item, shouldBeActive);
         });
 
@@ -2610,7 +2866,7 @@ function initFilterBasic({ root = document, signal } = {}) {
           if (button.getAttribute("data-filter-status") === "active") return;
           handleFilter(button.getAttribute("data-filter-target"));
         },
-        { signal },
+        { signal }
       );
     });
 
@@ -2631,7 +2887,9 @@ function initRandomTestimonials({ root }) {
   const scope = root.closest("#swup") || root;
   const cleanupTasks = [];
 
-  const lists = Array.from(document.querySelectorAll(".testimonial-lines_list-alt")).filter((list) => {
+  const lists = Array.from(
+    document.querySelectorAll(".testimonial-lines_list-alt")
+  ).filter((list) => {
     const container = list.closest("#swup");
     return !container || container === scope;
   });
@@ -2645,14 +2903,19 @@ function initRandomTestimonials({ root }) {
       JSON.stringify([
         item.textContent.replace(/\s+/g, " ").trim(),
         item.querySelector("img")?.getAttribute("src") || "",
-        item.querySelector("a[href]")?.getAttribute("href") || "",
-      ]),
+        item.querySelector("a[href]")?.getAttribute("href") || ""
+      ])
     );
-    const historyKey = list.getAttribute("data-testimonial-key") || JSON.stringify(identities);
-    const previous = isPersistent ? flight3PersistentTestimonials.get(list) : flight3PreviousTestimonials.get(historyKey);
+    const historyKey = list.getAttribute("data-testimonial-key") ||
+      JSON.stringify(identities);
+    const previous = isPersistent
+      ? flight3PersistentTestimonials.get(list)
+      : flight3PreviousTestimonials.get(historyKey);
     const candidates = items
       .map((_, index) => index)
-      .filter((index) => (isPersistent ? index !== previous : identities[index] !== previous));
+      .filter((index) =>
+        isPersistent ? index !== previous : identities[index] !== previous
+      );
     const pool = candidates.length ? candidates : items.map((_, index) => index);
     const selected = pool[Math.floor(Math.random() * pool.length)];
     if (isPersistent) flight3PersistentTestimonials.set(list, selected);
@@ -2684,17 +2947,20 @@ function initRandomTestimonials({ root }) {
 }
 
 window.Flight3Pages = {
-  /* Shared modules: directional hover, interactive collage and image trail. */
+
+/* Shared modules: directional hover, interactive collage and image trail. */
   shared(context) {
     const { root, signal } = context;
-    const cleanupTasks = runFlight3Initializers(context, [initRandomTestimonials, initInteractiveCollages, mountImageTrails]);
+    const cleanupTasks = runFlight3Initializers(context, [
+      initRandomTestimonials, initInteractiveCollages, mountImageTrails, initBackgroundVideos
+    ]);
     const containers = root.querySelectorAll("[data-directional-hover]");
 
     const directionMap = {
       top: "translateY(-100%)",
       bottom: "translateY(100%)",
       left: "translateX(-100%)",
-      right: "translateX(100%)",
+      right: "translateX(100%)"
     };
     const touched = [];
 
@@ -2710,47 +2976,53 @@ window.Flight3Pages = {
         top: y,
         right: width - x,
         bottom: height - y,
-        left: x,
+        left: x
       };
 
-      return Object.entries(distances).reduce((closest, entry) => (closest[1] < entry[1] ? closest : entry))[0];
+      return Object.entries(distances).reduce((closest, entry) =>
+        closest[1] < entry[1] ? closest : entry
+      )[0];
     }
 
     containers.forEach((container) => {
       const type = container.getAttribute("data-type") || "all";
 
-      container.querySelectorAll("[data-directional-hover-item]").forEach((item) => {
-        const tile = item.querySelector("[data-directional-hover-tile]");
-        if (!tile) return;
-        touched.push({ item, tile });
+      container
+        .querySelectorAll("[data-directional-hover-item]")
+        .forEach((item) => {
+          const tile = item.querySelector("[data-directional-hover-tile]");
+          if (!tile) return;
+          touched.push({ item, tile });
 
-        item.addEventListener(
-          "mouseenter",
-          (event) => {
-            const direction = getDirection(event, item, type);
-            tile.style.transition = "none";
-            tile.style.transform = directionMap[direction] || "translate(0, 0)";
+          item.addEventListener(
+            "mouseenter",
+            (event) => {
+              const direction = getDirection(event, item, type);
+              tile.style.transition = "none";
+              tile.style.transform =
+                directionMap[direction] || "translate(0, 0)";
 
-            // Intentional single reflow: positions the tile on the entry edge
-            // before restoring the authored transition.
-            void tile.offsetHeight;
-            tile.style.transition = "";
-            tile.style.transform = "translate(0%, 0%)";
-            item.setAttribute("data-status", `enter-${direction}`);
-          },
-          { signal },
-        );
+              // Intentional single reflow: positions the tile on the entry edge
+              // before restoring the authored transition.
+              void tile.offsetHeight;
+              tile.style.transition = "";
+              tile.style.transform = "translate(0%, 0%)";
+              item.setAttribute("data-status", `enter-${direction}`);
+            },
+            { signal }
+          );
 
-        item.addEventListener(
-          "mouseleave",
-          (event) => {
-            const direction = getDirection(event, item, type);
-            item.setAttribute("data-status", `leave-${direction}`);
-            tile.style.transform = directionMap[direction] || "translate(0, 0)";
-          },
-          { signal },
-        );
-      });
+          item.addEventListener(
+            "mouseleave",
+            (event) => {
+              const direction = getDirection(event, item, type);
+              item.setAttribute("data-status", `leave-${direction}`);
+              tile.style.transform =
+                directionMap[direction] || "translate(0, 0)";
+            },
+            { signal }
+          );
+        });
     });
 
     return () => {
@@ -2764,7 +3036,9 @@ window.Flight3Pages = {
   },
 
   home(context) {
-    const cleanupTasks = runFlight3Initializers(context, [initHomeTestimonials, initHomeHero, initHomeVideoModal, initBackgroundVideos]);
+    const cleanupTasks = runFlight3Initializers(context, [
+      initHomeTestimonials, initHomeHero, initHomeVideoModal
+    ]);
 
     return () => {
       cleanupTasks.reverse().forEach((cleanup) => cleanup());
@@ -2774,7 +3048,9 @@ window.Flight3Pages = {
   insights: initFilterBasic,
   "insight-detail": initCmsPrevNext,
   "case-study"(context) {
-    const cleanupTasks = runFlight3Initializers(context, [initCmsPrevNext, initCaseStudyReels, initCaseStudyVideoPlayers]);
+    const cleanupTasks = runFlight3Initializers(context, [
+      initCmsPrevNext, initCaseStudyReels, initCaseStudyVideoPlayers
+    ]);
 
     return () => {
       cleanupTasks.reverse().forEach((cleanup) => cleanup());
@@ -2783,7 +3059,9 @@ window.Flight3Pages = {
 
   /* Services-only module: statement crossfade and circular gallery. */
   services({ root, signal, gsap, ScrollTrigger }) {
-    const galleries = Array.from(root.querySelectorAll(".section.is--serv-scroll"));
+    const galleries = Array.from(
+      root.querySelectorAll(".section.is--serv-scroll")
+    );
     const section = galleries[0];
     if (!section) return;
 
@@ -2800,10 +3078,15 @@ window.Flight3Pages = {
               trigger: section,
               start: "40% 80%",
               end: "45% top",
-              scrub: true,
-            },
+              scrub: true
+            }
           })
-          .fromTo(incoming, { opacity: 0 }, { opacity: 1, ease: "none", stagger: 0.15 }, 0)
+          .fromTo(
+            incoming,
+            { opacity: 0 },
+            { opacity: 1, ease: "none", stagger: 0.15 },
+            0
+          )
           .to(statement, { opacity: 0.3, ease: "none" }, 0);
 
         return () => {
@@ -2818,19 +3101,21 @@ window.Flight3Pages = {
       idleRotationSpeed: 0.1,
       scrollAcceleration: 0.01,
       maxRotationSpeed: 2.5,
-      speedEasing: 0.05,
+      speedEasing: 0.05
     };
 
     galleries.forEach((gallery) => {
       const ring = gallery.querySelector(".circular-gallery_ring");
       if (!ring) return;
 
-      const items = Array.from(ring.children).filter((child) => child.classList.contains("circular-gallery_item"));
+      const items = Array.from(ring.children).filter((child) =>
+        child.classList.contains("circular-gallery_item")
+      );
       if (!items.length) return;
 
       const setters = items.map((item) => ({
         x: gsap.quickSetter(item, "x", "px"),
-        y: gsap.quickSetter(item, "y", "px"),
+        y: gsap.quickSetter(item, "y", "px")
       }));
 
       let ringRotation = 0;
@@ -2863,7 +3148,10 @@ window.Flight3Pages = {
       function tick(time) {
         const deltaFrames = Math.min((time - lastTickTime) * 60, 3);
         lastTickTime = time;
-        rotationSpeed += (CONFIG.idleRotationSpeed - rotationSpeed) * CONFIG.speedEasing * deltaFrames;
+        rotationSpeed +=
+          (CONFIG.idleRotationSpeed - rotationSpeed) *
+          CONFIG.speedEasing *
+          deltaFrames;
         ringRotation += rotationSpeed * rotationDirection * deltaFrames;
         positionItems();
       }
@@ -2885,7 +3173,7 @@ window.Flight3Pages = {
       media.add(
         {
           allowMotion: "(prefers-reduced-motion: no-preference)",
-          reduceMotion: "(prefers-reduced-motion: reduce)",
+          reduceMotion: "(prefers-reduced-motion: reduce)"
         },
         (context) => {
           measure();
@@ -2906,12 +3194,16 @@ window.Flight3Pages = {
               if (Math.abs(velocity) < 1) return;
 
               rotationDirection = velocity > 0 ? 1 : -1;
-              rotationSpeed = Math.min(rotationSpeed + Math.abs(velocity) * (CONFIG.scrollAcceleration / 60), CONFIG.maxRotationSpeed);
+              rotationSpeed = Math.min(
+                rotationSpeed +
+                  Math.abs(velocity) * (CONFIG.scrollAcceleration / 60),
+                CONFIG.maxRotationSpeed
+              );
             },
             onRefresh: () => {
               measure();
               positionItems();
-            },
+            }
           });
 
           if (scrollTrigger.isActive) startTicker();
@@ -2920,7 +3212,7 @@ window.Flight3Pages = {
             stopTicker();
             scrollTrigger.kill();
           };
-        },
+        }
       );
 
       const refreshWhenReady = () => {
@@ -2937,11 +3229,11 @@ window.Flight3Pages = {
       pendingImages.forEach((image) => {
         image.addEventListener("load", refreshWhenReady, {
           once: true,
-          signal,
+          signal
         });
         image.addEventListener("error", refreshWhenReady, {
           once: true,
-          signal,
+          signal
         });
       });
 
@@ -2977,7 +3269,7 @@ window.Flight3Pages = {
       [
         container.querySelector("[data-bg-zoom-content]"),
         container.querySelector("[data-bg-zoom-dark]"),
-        container.querySelector("[data-bg-zoom-img]"),
+        container.querySelector("[data-bg-zoom-img]")
       ]
         .filter(Boolean)
         .forEach((element) => {
@@ -2992,7 +3284,7 @@ window.Flight3Pages = {
         trigger,
         start,
         endTrigger,
-        end,
+        end
       });
       const range = Math.max(1, scrollTrigger.end - scrollTrigger.start);
       scrollTrigger.kill();
@@ -3031,13 +3323,15 @@ window.Flight3Pages = {
       masterTimeline = gsap.timeline({
         defaults: { ease: "none" },
         scrollTrigger: {
-          trigger: containers[0].querySelector("[data-bg-zoom-start]") || containers[0],
+          trigger:
+            containers[0].querySelector("[data-bg-zoom-start]") ||
+            containers[0],
           start: "clamp(top bottom)",
           endTrigger: containers[containers.length - 1],
           end: "bottom top",
           scrub: isMobile ? 0.2 : true,
-          invalidateOnRefresh: true,
-        },
+          invalidateOnRefresh: true
+        }
       });
 
       containers.forEach((container) => {
@@ -3056,7 +3350,7 @@ window.Flight3Pages = {
         contentEl.style.overflow = hasRadius ? "hidden" : "";
         if (hasRadius) {
           gsap.set(contentEl, {
-            borderRadius: isMobile ? endRadius : startRadius,
+            borderRadius: isMobile ? endRadius : startRadius
           });
         }
 
@@ -3064,14 +3358,14 @@ window.Flight3Pages = {
           trigger: startEl,
           start: "clamp(top bottom)",
           endTrigger: endEl,
-          end: "center center",
+          end: "center center"
         });
 
         const afterScrollRange = getScrollRange({
           trigger: endEl,
           start: "center center",
           endTrigger: container,
-          end: "bottom top",
+          end: "bottom top"
         });
 
         if (isMobile && startBounds && endBounds) {
@@ -3083,11 +3377,26 @@ window.Flight3Pages = {
 
           const finalX = parseFloat(gsap.getProperty(contentEl, "x")) || 0;
           const finalY = parseFloat(gsap.getProperty(contentEl, "y")) || 0;
-          const verticalOffset = Math.min(0, startBounds.top - endBounds.top);
-          const insetLeft = Math.max(0, startBounds.left - endBounds.left);
-          const insetTop = Math.max(0, startBounds.top - (endBounds.top + verticalOffset));
-          const insetRight = Math.max(0, endBounds.width - insetLeft - startBounds.width);
-          const insetBottom = Math.max(0, endBounds.height - insetTop - startBounds.height);
+          const verticalOffset = Math.min(
+            0,
+            startBounds.top - endBounds.top
+          );
+          const insetLeft = Math.max(
+            0,
+            startBounds.left - endBounds.left
+          );
+          const insetTop = Math.max(
+            0,
+            startBounds.top - (endBounds.top + verticalOffset)
+          );
+          const insetRight = Math.max(
+            0,
+            endBounds.width - insetLeft - startBounds.width
+          );
+          const insetBottom = Math.max(
+            0,
+            endBounds.height - insetTop - startBounds.height
+          );
           const initialClip = `inset(${insetTop}px ${insetRight}px ${insetBottom}px ${insetLeft}px round ${startRadius})`;
           const finalClip = `inset(0px 0px 0px 0px round ${endRadius})`;
 
@@ -3098,27 +3407,34 @@ window.Flight3Pages = {
             willChange: "transform, clip-path",
             backfaceVisibility: "hidden",
             contain: "paint",
-            force3D: true,
+            force3D: true
           });
           mobileStylesApplied = true;
 
-          masterTimeline.to(contentEl, {
-            y: finalY,
-            clipPath: finalClip,
-            duration: zoomScrollRange,
-          });
+          masterTimeline.to(
+            contentEl,
+            {
+              y: finalY,
+              clipPath: finalClip,
+              duration: zoomScrollRange
+            }
+          );
         } else {
           Flip.fit(contentEl, startEl, { scale: false });
           masterTimeline.add(
             Flip.fit(contentEl, endEl, {
               duration: zoomScrollRange,
               ease: "none",
-              scale: false,
-            }),
+              scale: false
+            })
           );
 
           if (hasRadius) {
-            masterTimeline.to(contentEl, { borderRadius: endRadius, duration: zoomScrollRange }, "<");
+            masterTimeline.to(
+              contentEl,
+              { borderRadius: endRadius, duration: zoomScrollRange },
+              "<"
+            );
           }
         }
 
@@ -3131,13 +3447,17 @@ window.Flight3Pages = {
         } else {
           masterTimeline.to(contentEl, {
             y: `+=${afterScrollRange}`,
-            duration: afterScrollRange,
+            duration: afterScrollRange
           });
         }
 
         if (darkEl) {
           gsap.set(darkEl, { opacity: 0 });
-          masterTimeline.to(darkEl, { opacity: 0.75, duration: afterScrollRange * 0.25 }, "<");
+          masterTimeline.to(
+            darkEl,
+            { opacity: 0.75, duration: afterScrollRange * 0.25 },
+            "<"
+          );
         }
 
         if (imgEl) {
@@ -3148,21 +3468,24 @@ window.Flight3Pages = {
               ? {
                   willChange: "transform",
                   backfaceVisibility: "hidden",
-                  force3D: true,
+                  force3D: true
                 }
-              : {}),
+              : {})
           });
           masterTimeline.to(
             imgEl,
             {
               scale: 1.25,
               yPercent: -10,
-              duration: afterScrollRange,
+              duration: afterScrollRange
             },
-            "<",
+            "<"
           );
 
-          const video = imgEl instanceof HTMLVideoElement ? imgEl : imgEl.querySelector?.("video");
+          const video =
+            imgEl instanceof HTMLVideoElement
+              ? imgEl
+              : imgEl.querySelector?.("video");
           if (video) ownedWorkVideos.add(video);
 
           if (isMobile && video) {
@@ -3176,7 +3499,7 @@ window.Flight3Pages = {
                 } else {
                   video.pause();
                 }
-              },
+              }
             });
 
             videoVisibilityTriggers.push(playbackTrigger);
@@ -3206,7 +3529,7 @@ window.Flight3Pages = {
         window.clearTimeout(resizeTimer);
         resizeTimer = window.setTimeout(bgZoomTimeline, 100);
       },
-      { signal },
+      { signal }
     );
 
     return () => {
@@ -3215,14 +3538,15 @@ window.Flight3Pages = {
       killMasterTimeline();
       restoreOriginalStyles();
     };
-  },
+  }
 };
 
-/* Flight3 page transitions — Swup controller v1.25.1 */
+
+/* Flight3 page transitions — Swup controller v1.26.1 */
 (() => {
   "use strict";
 
-  const VERSION = "1.25.1";
+  const VERSION = "1.26.1";
 
   const CONFIG = Object.freeze({
     introKey: "flight3-intro-session-complete",
@@ -3237,11 +3561,10 @@ window.Flight3Pages = {
     pageScale: 0.95,
     pageTravel: "-10rem",
     navExitY: -42,
-    navEnterY: 42,
+    navEnterY: 42
   });
 
-  const NON_HTML_EXTENSION =
-    /\.(?:7z|avi|avif|css|csv|docx?|gif|gz|ico|jpe?g|js|json|m4a|mov|mp3|mp4|mpeg|pdf|png|pptx?|rar|svg|tar|tiff?|txt|wav|webm|webp|xlsx?|xml|zip)$/i;
+  const NON_HTML_EXTENSION = /\.(?:7z|avi|avif|css|csv|docx?|gif|gz|ico|jpe?g|js|json|m4a|mov|mp3|mp4|mpeg|pdf|png|pptx?|rar|svg|tar|tiff?|txt|wav|webm|webp|xlsx?|xml|zip)$/i;
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
   const finePointer = window.matchMedia("(hover: hover) and (pointer: fine)");
 
@@ -3521,14 +3844,21 @@ window.Flight3Pages = {
       return { page: "*", mount: pageOrModule };
     }
 
-    if (typeof pageOrModule === "string" && typeof maybeFactory === "function") {
+    if (
+      typeof pageOrModule === "string" &&
+      typeof maybeFactory === "function"
+    ) {
       return { page: pageOrModule, mount: maybeFactory };
     }
 
-    if (pageOrModule && typeof pageOrModule === "object" && typeof pageOrModule.mount === "function") {
+    if (
+      pageOrModule &&
+      typeof pageOrModule === "object" &&
+      typeof pageOrModule.mount === "function"
+    ) {
       return {
         page: pageOrModule.page || "*",
-        mount: pageOrModule.mount,
+        mount: pageOrModule.mount
       };
     }
 
@@ -3562,32 +3892,23 @@ window.Flight3Pages = {
   let formIdSequence = 0;
 
   function namespaceDuplicateFormIds(container) {
-    const wrappers = Array.from(container.querySelectorAll(".w-form")).sort(
-      (a, b) => Number(Boolean(b.closest("#swup"))) - Number(Boolean(a.closest("#swup"))),
-    );
+    const wrappers = Array.from(container.querySelectorAll(".w-form"))
+      .sort((a, b) => Number(Boolean(b.closest("#swup"))) - Number(Boolean(a.closest("#swup"))));
     wrappers.forEach((wrapper) => {
       const replacements = new Map();
       wrapper.querySelectorAll("[id]").forEach((element) => {
         const id = element.id;
         if (!id || document.querySelectorAll(`[id="${CSS.escape(id)}"]`).length < 2) return;
         let nextId;
-        do {
-          nextId = `${id}--f3-${++formIdSequence}`;
-        } while (document.getElementById(nextId));
+        do { nextId = `${id}--f3-${++formIdSequence}`; }
+        while (document.getElementById(nextId));
         replacements.set(id, nextId);
         element.id = nextId;
       });
       wrapper.querySelectorAll("[for], [aria-labelledby], [aria-describedby], [aria-controls]").forEach((element) => {
         ["for", "aria-labelledby", "aria-describedby", "aria-controls"].forEach((name) => {
           const value = element.getAttribute(name);
-          if (value)
-            element.setAttribute(
-              name,
-              value
-                .split(/\s+/)
-                .map((id) => replacements.get(id) || id)
-                .join(" "),
-            );
+          if (value) element.setAttribute(name, value.split(/\s+/).map((id) => replacements.get(id) || id).join(" "));
         });
       });
     });
@@ -3619,16 +3940,11 @@ window.Flight3Pages = {
     const pending = forms.filter((form) => !$.data(form, ".w-form"));
     // File uploads need Webflow's private signing/setup lifecycle. Use a native
     // document load rather than pretending they support this scoped adapter.
-    if (
-      pending.some((form) => {
-        const action = form.getAttribute("action") || "";
-        return (
-          form.closest(".w-form").querySelector(".w-file-upload") ||
-          ((!action || /list-manage[1-9]?.com/i.test(action)) && !nativeFormHandlers.has(action))
-        );
-      })
-    )
-      return false;
+    if (pending.some((form) => {
+      const action = form.getAttribute("action") || "";
+      return form.closest(".w-form").querySelector(".w-file-upload") ||
+        ((!action || /list-manage[1-9]?.com/i.test(action)) && !nativeFormHandlers.has(action));
+    })) return false;
 
     const cleanups = [];
     let disposed = false;
@@ -3644,16 +3960,13 @@ window.Flight3Pages = {
         action: form.getAttribute("action") || "",
         redirect: form.getAttribute("data-redirect"),
         success: false,
-        handler: nativeFormHandlers.get(form.getAttribute("action") || "") || null,
+        handler: nativeFormHandlers.get(form.getAttribute("action") || "") || null
       };
       state.wait = state.btn.attr("data-wait") || null;
       $.data(form, ".w-form", state);
       const label = form.getAttribute("aria-label") || form.getAttribute("data-name") || "Form";
       if (!form.hasAttribute("aria-label")) form.setAttribute("aria-label", label);
-      [
-        [state.done, "success"],
-        [state.fail, "failure"],
-      ].forEach(([element, status]) => {
+      [[state.done, "success"], [state.fail, "failure"]].forEach(([element, status]) => {
         element.attr({ tabindex: "-1", role: "region" });
         if (!element.attr("aria-label")) element.attr("aria-label", `${label} ${status}`);
       });
@@ -3699,7 +4012,7 @@ window.Flight3Pages = {
                 if (disposed) return;
                 state.turnstileToken = null;
                 setChallengePending(true);
-              },
+              }
             });
           } catch (error) {
             widgetHost.remove();
@@ -3708,14 +4021,11 @@ window.Flight3Pages = {
           }
         };
         if (typeof IntersectionObserver === "function") {
-          observer = new IntersectionObserver(
-            (entries) => {
-              if (!entries.some((entry) => entry.isIntersecting)) return;
-              observer.disconnect();
-              renderChallenge();
-            },
-            { rootMargin: "200px" },
-          );
+          observer = new IntersectionObserver((entries) => {
+            if (!entries.some((entry) => entry.isIntersecting)) return;
+            observer.disconnect();
+            renderChallenge();
+          }, { rootMargin: "200px" });
           observer.observe(form);
         } else renderChallenge();
       }
@@ -3753,10 +4063,7 @@ window.Flight3Pages = {
         signal?.removeEventListener("abort", abort);
         resolve();
       };
-      const abort = () => {
-        animation.kill();
-        finish();
-      };
+      const abort = () => { animation.kill(); finish(); };
       const previous = animation.eventCallback("onComplete");
       const interrupted = animation.eventCallback("onInterrupt");
       animation.eventCallback("onComplete", () => {
@@ -3787,7 +4094,11 @@ window.Flight3Pages = {
   }
 
   function isTouchEnvironment() {
-    return navigator.maxTouchPoints > 0 || window.matchMedia("(pointer: coarse)").matches || Number(window.ScrollTrigger?.isTouch) > 0;
+    return (
+      navigator.maxTouchPoints > 0 ||
+      window.matchMedia("(pointer: coarse)").matches ||
+      Number(window.ScrollTrigger?.isTouch) > 0
+    );
   }
 
   function setScrollLock(owner, shouldLock) {
@@ -3839,7 +4150,7 @@ window.Flight3Pages = {
       // overflow:hidden and can create a self-sustaining lenis-stopped loop.
       autoToggle: false,
       stopInertiaOnNavigate: true,
-      autoRaf: false,
+      autoRaf: false
     });
 
     lenis.on("scroll", window.ScrollTrigger.update);
@@ -3855,9 +4166,15 @@ window.Flight3Pages = {
 
   function initMobileNavOnce() {
     const nav = document.querySelector(".nav");
-    const openControls = Array.from(document.querySelectorAll('[data-mobile-nav="open"]'));
-    const closeControls = Array.from(document.querySelectorAll('[data-mobile-nav="close"]'));
-    const navItems = Array.from(document.querySelectorAll(".nav_m-inner .is--nav-item"));
+    const openControls = Array.from(
+      document.querySelectorAll('[data-mobile-nav="open"]')
+    );
+    const closeControls = Array.from(
+      document.querySelectorAll('[data-mobile-nav="close"]')
+    );
+    const navItems = Array.from(
+      document.querySelectorAll(".nav_m-inner .is--nav-item")
+    );
 
     if (!nav || !openControls.length) return null;
     if (nav.__flight3MobileNav) return nav.__flight3MobileNav;
@@ -3880,7 +4197,9 @@ window.Flight3Pages = {
       menu.setAttribute("aria-hidden", String(!open));
     };
 
-    let isOpen = nav.getAttribute("data-m-menu") === "active" || openControls.some((control) => control.classList.contains("is--open"));
+    let isOpen =
+      nav.getAttribute("data-m-menu") === "active" ||
+      openControls.some((control) => control.classList.contains("is--open"));
 
     const updateOpenControls = (open) => {
       openControls.forEach((control) => {
@@ -3918,8 +4237,8 @@ window.Flight3Pages = {
         ease: "power2.in",
         stagger: {
           each: 0.04,
-          from: "end",
-        },
+          from: "end"
+        }
       });
     };
 
@@ -3949,7 +4268,7 @@ window.Flight3Pages = {
         duration: 0.6,
         delay: 0.3,
         ease: "power2.out",
-        stagger: 0.06,
+        stagger: 0.06
       });
     };
 
@@ -3993,13 +4312,7 @@ window.Flight3Pages = {
       close({ immediate: true });
     }
 
-    const controller = {
-      open,
-      close,
-      get isOpen() {
-        return isOpen;
-      },
-    };
+    const controller = { open, close, get isOpen() { return isOpen; } };
     nav.__flight3MobileNav = controller;
     return controller;
   }
@@ -4023,23 +4336,33 @@ window.Flight3Pages = {
 
   function readEntranceTiming(element, defaults) {
     return {
-      at: Math.max(0, numericAttribute(element, "data-transition-at", defaults.at) + numericAttribute(element, "data-transition-delay", 0)),
-      duration: Math.max(0.01, numericAttribute(element, "data-transition-duration", defaults.duration)),
-      stagger: numericAttribute(element, "data-transition-stagger", defaults.stagger),
+      at: Math.max(
+        0,
+        numericAttribute(element, "data-transition-at", defaults.at) +
+          numericAttribute(element, "data-transition-delay", 0)
+      ),
+      duration: Math.max(
+        0.01,
+        numericAttribute(
+          element,
+          "data-transition-duration",
+          defaults.duration
+        )
+      ),
+      stagger: numericAttribute(
+        element,
+        "data-transition-stagger",
+        defaults.stagger
+      )
     };
   }
 
   function addSplitEntrance(timeline, element, options, state) {
     if (typeof window.SplitText === "undefined") {
-      addElementEntrance(
-        timeline,
-        element,
-        {
-          ...options,
-          type: "fade-up",
-        },
-        state,
-      );
+      addElementEntrance(timeline, element, {
+        ...options,
+        type: "fade-up"
+      }, state);
       return;
     }
 
@@ -4047,7 +4370,7 @@ window.Flight3Pages = {
     const split = window.SplitText.create(element, {
       type: splitType,
       mask: splitType,
-      aria: "auto",
+      aria: "auto"
     });
 
     const targets = splitType === "lines" ? split.lines : split.words;
@@ -4080,7 +4403,7 @@ window.Flight3Pages = {
 
     window.gsap.set(targets, {
       yPercent: 110,
-      autoAlpha: options.opacity === false ? 1 : 0,
+      autoAlpha: options.opacity === false ? 1 : 0
     });
 
     timeline.to(
@@ -4090,9 +4413,9 @@ window.Flight3Pages = {
         autoAlpha: 1,
         duration: options.duration,
         ease: options.ease,
-        stagger: boundedStagger(targets, options.stagger),
+        stagger: boundedStagger(targets, options.stagger)
       },
-      options.at,
+      options.at
     );
   }
 
@@ -4104,7 +4427,7 @@ window.Flight3Pages = {
     const to = {
       autoAlpha: 1,
       duration: options.duration,
-      ease: options.ease,
+      ease: options.ease
     };
 
     if (type === "fade-up" || type === "clip-up") {
@@ -4137,11 +4460,16 @@ window.Flight3Pages = {
       const timing = readEntranceTiming(element, {
         at: 0,
         duration: 1.25,
-        stagger: 0.1,
+        stagger: 0.1
       });
 
       if (type === "fade-up") {
-        addElementEntrance(timeline, element, { ...timing, type, ease: "power3.out" }, state);
+        addElementEntrance(
+          timeline,
+          element,
+          { ...timing, type, ease: "power3.out" },
+          state
+        );
         return;
       }
 
@@ -4152,24 +4480,30 @@ window.Flight3Pages = {
           ...timing,
           splitBy: type === "lines-up" ? "lines" : "words",
           ease: "power3.out",
-          opacity: false,
+          opacity: false
         },
-        state,
+        state
       );
     });
 
     page.querySelectorAll("[data-transition-paragraph]").forEach((element) => {
-      const type = element.getAttribute("data-transition-paragraph") || "lines-up";
+      const type =
+        element.getAttribute("data-transition-paragraph") || "lines-up";
       if (type === "none") return;
 
       const timing = readEntranceTiming(element, {
         at: 0.14,
         duration: 1.05,
-        stagger: 0.08,
+        stagger: 0.08
       });
 
       if (type === "fade-up") {
-        addElementEntrance(timeline, element, { ...timing, type, ease: "power3.out" }, state);
+        addElementEntrance(
+          timeline,
+          element,
+          { ...timing, type, ease: "power3.out" },
+          state
+        );
         return;
       }
 
@@ -4180,9 +4514,9 @@ window.Flight3Pages = {
           ...timing,
           splitBy: type === "words-up" ? "words" : "lines",
           ease: "power3.out",
-          opacity: true,
+          opacity: true
         },
-        state,
+        state
       );
     });
 
@@ -4193,10 +4527,15 @@ window.Flight3Pages = {
       const timing = readEntranceTiming(element, {
         at: 0.24,
         duration: 1,
-        stagger: 0,
+        stagger: 0
       });
 
-      addElementEntrance(timeline, element, { ...timing, type, ease: "power3.out" }, state);
+      addElementEntrance(
+        timeline,
+        element,
+        { ...timing, type, ease: "power3.out" },
+        state
+      );
     });
 
     return {
@@ -4204,7 +4543,7 @@ window.Flight3Pages = {
       cleanup() {
         state.splits.forEach((split) => split.revert());
         restoreStyles(state.styles);
-      },
+      }
     };
   }
 
@@ -4214,7 +4553,7 @@ window.Flight3Pages = {
     if (!page || reducedMotion.matches) {
       return {
         timeline: window.gsap.timeline({ paused: true }),
-        cleanup() {},
+        cleanup() {}
       };
     }
 
@@ -4222,7 +4561,9 @@ window.Flight3Pages = {
   }
 
   function syncInitialNavTheme(container, { atScroll = false } = {}) {
-    const sections = Array.from(container?.querySelectorAll("[data-theme-section], [data-bg-section]") || []);
+    const sections = Array.from(container?.querySelectorAll(
+      "[data-theme-section], [data-bg-section]"
+    ) || []);
     let firstSection = sections[0];
     if (atScroll) {
       const navCenter = (document.querySelector("[data-nav-bar-height]")?.offsetHeight || 0) / 2;
@@ -4255,7 +4596,10 @@ window.Flight3Pages = {
     let url;
 
     try {
-      const value = typeof urlLike === "string" ? urlLike : urlLike?.url || urlLike?.href || window.location.href;
+      const value =
+        typeof urlLike === "string"
+          ? urlLike
+          : urlLike?.url || urlLike?.href || window.location.href;
       url = new URL(value, window.location.href);
     } catch (error) {
       url = new URL(window.location.href);
@@ -4298,8 +4642,12 @@ window.Flight3Pages = {
   }
 
   function getParallelContainers() {
-    const containers = Array.from(document.querySelectorAll(CONFIG.routerSelector));
-    const previous = containers.find((element) => element.classList.contains("is-previous-container"));
+    const containers = Array.from(
+      document.querySelectorAll(CONFIG.routerSelector)
+    );
+    const previous = containers.find((element) =>
+      element.classList.contains("is-previous-container")
+    );
     const next = containers.find((element) => element !== previous);
 
     return { previous, next };
@@ -4310,10 +4658,20 @@ window.Flight3Pages = {
     const containerTop = container.getBoundingClientRect().top;
     const entranceLimit = window.innerHeight * 1.2;
     const images = Array.from(
-      new Set(container.querySelectorAll("[data-transition-reveal] img, img[data-transition-reveal], [data-ukiyo]")),
-    ).filter((element) => element instanceof HTMLImageElement && element.getBoundingClientRect().top - containerTop < entranceLimit);
+      new Set(
+        container.querySelectorAll(
+          "[data-transition-reveal] img, img[data-transition-reveal], [data-ukiyo]"
+        )
+      )
+    ).filter(
+      (element) =>
+        element instanceof HTMLImageElement &&
+        element.getBoundingClientRect().top - containerTop < entranceLimit
+    );
 
-    const pendingImages = images.filter((image) => !image.complete || image.naturalWidth === 0);
+    const pendingImages = images.filter(
+      (image) => !image.complete || image.naturalWidth === 0
+    );
 
     const listenerCleanups = [];
     const readinessTasks = pendingImages.map((image) => {
@@ -4377,7 +4735,7 @@ window.Flight3Pages = {
         cleaned = true;
         abortController.abort();
         cleanupTasks.reverse().forEach((cleanup) => cleanup());
-      },
+      }
     };
   }
 
@@ -4400,7 +4758,7 @@ window.Flight3Pages = {
     if (!previous || !next) {
       next?.removeAttribute("data-flight3-next");
       window.gsap.set(next || CONFIG.routerSelector, {
-        clearProps: "all",
+        clearProps: "all"
       });
       return;
     }
@@ -4430,12 +4788,12 @@ window.Flight3Pages = {
 
     window.gsap.set(next, {
       autoAlpha: 1,
-      willChange: "transform",
+      willChange: "transform"
     });
 
     window.gsap.set(previous, {
       transformOrigin: "50% 0%",
-      willChange: "transform",
+      willChange: "transform"
     });
 
     if (shade) {
@@ -4457,18 +4815,18 @@ window.Flight3Pages = {
           y: CONFIG.pageTravel,
           scale: CONFIG.pageScale,
           duration: CONFIG.transitionDuration,
-          ease: getTransitionEase(),
+          ease: getTransitionEase()
         },
-        "transition",
+        "transition"
       )
       .to(
         next,
         {
           y: 0,
           duration: CONFIG.transitionDuration,
-          ease: getTransitionEase(),
+          ease: getTransitionEase()
         },
-        "transition",
+        "transition"
       );
 
     if (shade) {
@@ -4477,9 +4835,9 @@ window.Flight3Pages = {
         {
           autoAlpha: 0.72,
           duration: 1,
-          ease: "power1.out",
+          ease: "power1.out"
         },
-        "transition",
+        "transition"
       );
     }
 
@@ -4491,17 +4849,17 @@ window.Flight3Pages = {
             y: CONFIG.navExitY,
             autoAlpha: 0,
             duration: 0.55,
-            ease: "power3.in",
+            ease: "power3.in"
           },
-          "transition",
+          "transition"
         )
         .set(
           nav,
           {
             y: CONFIG.navEnterY,
-            autoAlpha: 0,
+            autoAlpha: 0
           },
-          "transition+=0.64",
+          "transition+=0.64"
         )
         .to(
           nav,
@@ -4509,9 +4867,9 @@ window.Flight3Pages = {
             y: 0,
             autoAlpha: 1,
             duration: 0.9,
-            ease: "power3.out",
+            ease: "power3.out"
           },
-          "transition+=0.76",
+          "transition+=0.76"
         );
     }
 
@@ -4525,7 +4883,7 @@ window.Flight3Pages = {
         entrance.timeline.play(0);
       },
       null,
-      CONFIG.heroStart,
+      CONFIG.heroStart
     );
 
     await animationPromise(timeline, signal);
@@ -4548,19 +4906,20 @@ window.Flight3Pages = {
 
     if (container) {
       window.gsap.set(container, {
-        clearProps: "transform,visibility,opacity,willChange",
+        clearProps:
+          "transform,visibility,opacity,willChange"
       });
     }
 
     if (nav) {
       window.gsap.set(nav, {
-        clearProps: "transform,opacity,visibility,willChange",
+        clearProps: "transform,opacity,visibility,willChange"
       });
     }
 
     if (shade) {
       window.gsap.set(shade, {
-        clearProps: "opacity,visibility,willChange",
+        clearProps: "opacity,visibility,willChange"
       });
     }
   }
@@ -4594,7 +4953,7 @@ window.Flight3Pages = {
       ["tabs", ".w-tabs"],
       ["dropdown", ".w-dropdown"],
       ["lightbox", ".w-lightbox"],
-      ["lottie", "[data-animation-type='lottie']"],
+      ["lottie", "[data-animation-type='lottie']"]
     ];
 
     for (const [name, selector] of modules) {
@@ -4610,7 +4969,9 @@ window.Flight3Pages = {
   }
 
   function initThemeTracking(root, cleanupTasks) {
-    const sections = Array.from(root.querySelectorAll("[data-theme-section], [data-bg-section]"));
+    const sections = Array.from(
+      root.querySelectorAll("[data-theme-section], [data-bg-section]")
+    );
     if (!sections.length) return;
 
     const navBarHeight = document.querySelector("[data-nav-bar-height]");
@@ -4659,7 +5020,7 @@ window.Flight3Pages = {
         onEnterBack: () => applySection(section),
         onRefresh(self) {
           if (self.isActive) applySection(section);
-        },
+        }
       });
     });
   }
@@ -4684,10 +5045,10 @@ window.Flight3Pages = {
             scrollTrigger: {
               trigger: heading,
               start: "top 75%",
-              once: true,
-            },
+              once: true
+            }
           });
-        },
+        }
       });
 
       splitInstances.push(split);
@@ -4699,7 +5060,8 @@ window.Flight3Pages = {
     const revealSections = Array.from(root.querySelectorAll("[data-sec-rev]"));
     if (!parallaxSections.length && !revealSections.length) return;
 
-    const overlayColor = (value) => (value === "light" ? "#fdfdfd" : "#141414");
+    const overlayColor = (value) =>
+      value === "light" ? "#fdfdfd" : "#141414";
     const responsiveStyles = new Map();
     const media = window.gsap.matchMedia();
 
@@ -4707,7 +5069,7 @@ window.Flight3Pages = {
       {
         mobile: "(max-width: 767px)",
         desktop: "(min-width: 768px)",
-        reduceMotion: "(prefers-reduced-motion: reduce)",
+        reduceMotion: "(prefers-reduced-motion: reduce)"
       },
       (context) => {
         if (context.conditions.reduceMotion) return;
@@ -4735,7 +5097,7 @@ window.Flight3Pages = {
             pointerEvents: "none",
             background: color,
             opacity: "0",
-            willChange: "opacity",
+            willChange: "opacity"
           });
           section.appendChild(overlay);
           overlays.push(overlay);
@@ -4750,7 +5112,10 @@ window.Flight3Pages = {
           rememberStyle(section, responsiveStyles);
           section.style.willChange = "transform";
 
-          const overlay = createOverlay(section, overlayColor(section.getAttribute("data-sec-plx")));
+          const overlay = createOverlay(
+            section,
+            overlayColor(section.getAttribute("data-sec-plx"))
+          );
 
           window.gsap
             .timeline({
@@ -4759,8 +5124,8 @@ window.Flight3Pages = {
                 start: "top bottom",
                 end: "top 15%",
                 scrub,
-                invalidateOnRefresh: true,
-              },
+                invalidateOnRefresh: true
+              }
             })
             .to(section, { y: distance, ease: "none" }, 0)
             .to(overlay, { opacity: 0.75, ease: "none" }, 0);
@@ -4775,15 +5140,18 @@ window.Flight3Pages = {
             rememberStyle(element, responsiveStyles);
           });
 
-          const overlay = createOverlay(section, overlayColor(section.getAttribute("data-sec-rev")));
+          const overlay = createOverlay(
+            section,
+            overlayColor(section.getAttribute("data-sec-rev"))
+          );
 
           window.gsap.set(previousSection, {
             zIndex: 1,
-            position: "relative",
+            position: "relative"
           });
           window.gsap.set(section, {
             y: -distance,
-            willChange: "transform",
+            willChange: "transform"
           });
           window.gsap.set(overlay, { opacity: 0.75 });
 
@@ -4794,8 +5162,8 @@ window.Flight3Pages = {
                 start: "bottom bottom",
                 end: "bottom 10%",
                 scrub,
-                invalidateOnRefresh: true,
-              },
+                invalidateOnRefresh: true
+              }
             })
             .to(section, { y: 0, ease: "none" }, 0)
             .to(overlay, { opacity: 0, ease: "none" }, 0);
@@ -4805,7 +5173,7 @@ window.Flight3Pages = {
           overlays.forEach((overlay) => overlay.remove());
           restoreStyles(responsiveStyles);
         };
-      },
+      }
     );
 
     cleanupTasks.push(() => {
@@ -4831,9 +5199,9 @@ window.Flight3Pages = {
           scrollTrigger: {
             trigger: group,
             start: "top 85%",
-            once: true,
-          },
-        },
+            once: true
+          }
+        }
       );
     });
   }
@@ -4850,16 +5218,25 @@ window.Flight3Pages = {
           start: "top bottom",
           end: "bottom top",
           scrub: true,
-          invalidateOnRefresh: true,
-        },
+          invalidateOnRefresh: true
+        }
       });
 
       items.forEach((item, index) => {
         const itemOffset = index * offset;
 
         timeline
-          .fromTo(item, { yPercent: 100 + itemOffset }, { yPercent: 0, ease: "none", duration: 0.5 }, 0)
-          .to(item, { yPercent: -20 - itemOffset, ease: "none", duration: 0.5 }, 0.5);
+          .fromTo(
+            item,
+            { yPercent: 100 + itemOffset },
+            { yPercent: 0, ease: "none", duration: 0.5 },
+            0
+          )
+          .to(
+            item,
+            { yPercent: -20 - itemOffset, ease: "none", duration: 0.5 },
+            0.5
+          );
       });
     });
   }
@@ -4891,7 +5268,7 @@ window.Flight3Pages = {
       {
         mobile: "(max-width: 767px)",
         desktop: "(min-width: 768px)",
-        reduceMotion: "(prefers-reduced-motion: reduce)",
+        reduceMotion: "(prefers-reduced-motion: reduce)"
       },
       (context) => {
         if (context.conditions.reduceMotion) return;
@@ -4901,14 +5278,14 @@ window.Flight3Pages = {
           scale: isMobile ? 1.08 : 1.15,
           speed: isMobile ? 1 : 1.2,
           willChange: true,
-          wrapperClass: "ukiyo-wrapper",
+          wrapperClass: "ukiyo-wrapper"
         });
 
         return () => {
           instance?.destroy?.();
           instance = null;
         };
-      },
+      }
     );
 
     cleanupTasks.push(() => {
@@ -4940,7 +5317,7 @@ window.Flight3Pages = {
             ScrollTrigger: window.ScrollTrigger,
             SplitText: window.SplitText,
             lenis,
-            setScrollLock,
+            setScrollLock
           };
           if (initializer === simplePages.work) {
             const motion = window.gsap.matchMedia();
@@ -4969,7 +5346,7 @@ window.Flight3Pages = {
           ScrollTrigger: window.ScrollTrigger,
           SplitText: window.SplitText,
           lenis,
-          setScrollLock,
+          setScrollLock
         });
 
         if (typeof cleanup === "function") cleanupTasks.push(cleanup);
@@ -5040,11 +5417,11 @@ window.Flight3Pages = {
 
     const xTo = window.gsap.quickTo(cursor, "x", {
       duration: 0.4,
-      ease: "power3.out",
+      ease: "power3.out"
     });
     const yTo = window.gsap.quickTo(cursor, "y", {
       duration: 0.4,
-      ease: "power3.out",
+      ease: "power3.out"
     });
 
     const measureCursorGeometry = () => {
@@ -5056,12 +5433,20 @@ window.Flight3Pages = {
 
     const update = () => {
       ticking = false;
-      const hover = needsHitTest ? document.elementFromPoint(mouseX, mouseY)?.closest("[data-cursor-hover]") || null : pointerHover;
+      const hover = needsHitTest
+        ? document
+            .elementFromPoint(mouseX, mouseY)
+            ?.closest("[data-cursor-hover]") || null
+        : pointerHover;
       needsHitTest = false;
 
       if (cursorGeometryDirty) measureCursorGeometry();
       const currentX = parseFloat(window.gsap.getProperty(cursor, "x")) || 0;
-      const nextState = hover ? (currentX + cursorRightOffset >= window.innerWidth ? "active-edge" : "active") : "";
+      const nextState = hover
+        ? currentX + cursorRightOffset >= window.innerWidth
+          ? "active-edge"
+          : "active"
+        : "";
 
       if (nextState !== currentState) {
         cursor.setAttribute("data-cursor", nextState);
@@ -5099,7 +5484,7 @@ window.Flight3Pages = {
         yTo(mouseY);
         requestUpdate();
       },
-      { passive: true },
+      { passive: true }
     );
 
     window.addEventListener(
@@ -5110,7 +5495,7 @@ window.Flight3Pages = {
           requestUpdate();
         }
       },
-      { passive: true },
+      { passive: true }
     );
 
     window.addEventListener(
@@ -5119,25 +5504,34 @@ window.Flight3Pages = {
         cursorGeometryDirty = true;
         if (hasMoved) requestUpdate();
       },
-      { passive: true },
+      { passive: true }
     );
   }
 
   function initPersistentFormPanel() {
-    const backdropSelector = "[data-form-backdrop], [data-contact-panel-backdrop]";
-    const dialogSelector = "[data-form-dialog], [data-contact-panel-dialog]";
-    const candidates = [...document.querySelectorAll("[data-form-panel]"), ...document.querySelectorAll("[data-contact-panel]")].filter(
-      (panel, index, panels) => panels.indexOf(panel) === index,
-    );
+    const backdropSelector =
+      "[data-form-backdrop], [data-contact-panel-backdrop]";
+    const dialogSelector =
+      "[data-form-dialog], [data-contact-panel-dialog]";
+    const candidates = [
+      ...document.querySelectorAll("[data-form-panel]"),
+      ...document.querySelectorAll("[data-contact-panel]")
+    ].filter((panel, index, panels) => panels.indexOf(panel) === index);
 
     /*
      * Prefer a complete data-form-panel. A stale/empty legacy
      * data-contact-panel must not disable the valid form that follows it.
      */
-    const panel = candidates.find((candidate) => candidate.querySelector(backdropSelector) && candidate.querySelector(dialogSelector));
+    const panel = candidates.find(
+      (candidate) =>
+        candidate.querySelector(backdropSelector) &&
+        candidate.querySelector(dialogSelector)
+    );
     if (!panel) {
       if (candidates.length) {
-        console.warn("Flight3: a form panel was found, but it needs a backdrop and dialog child.");
+        console.warn(
+          "Flight3: a form panel was found, but it needs a backdrop and dialog child."
+        );
       }
       return null;
     }
@@ -5190,7 +5584,7 @@ window.Flight3Pages = {
       }
 
       timeline = window.gsap.timeline({
-        onComplete: finishClosed,
+        onComplete: finishClosed
       });
       timeline
         .to(
@@ -5200,9 +5594,9 @@ window.Flight3Pages = {
             autoAlpha: 0,
             duration: 0.4,
             ease: "power3.in",
-            overwrite: true,
+            overwrite: true
           },
-          0,
+          0
         )
         .to(
           backdrop,
@@ -5210,9 +5604,9 @@ window.Flight3Pages = {
             autoAlpha: 0,
             duration: 0.32,
             ease: "power2.inOut",
-            overwrite: true,
+            overwrite: true
           },
-          0.06,
+          0.06
         );
     };
 
@@ -5241,7 +5635,7 @@ window.Flight3Pages = {
       }
 
       timeline = window.gsap.timeline({
-        onComplete: () => dialog?.focus?.({ preventScroll: true }),
+        onComplete: () => dialog?.focus?.({ preventScroll: true })
       });
       timeline
         .set(backdrop, { autoAlpha: 0 })
@@ -5252,9 +5646,9 @@ window.Flight3Pages = {
             autoAlpha: 1,
             duration: 0.42,
             ease: "power2.out",
-            overwrite: true,
+            overwrite: true
           },
-          0,
+          0
         )
         .to(
           dialog,
@@ -5263,14 +5657,16 @@ window.Flight3Pages = {
             autoAlpha: 1,
             duration: 0.65,
             ease: "power4.out",
-            overwrite: true,
+            overwrite: true
           },
-          0.05,
+          0.05
         );
     };
 
     document.addEventListener("click", (event) => {
-      const opener = event.target.closest?.("[data-form-open], [data-contact-panel-open]");
+      const opener = event.target.closest?.(
+        "[data-form-open], [data-contact-panel-open]"
+      );
       if (opener) {
         event.preventDefault();
         open(opener);
@@ -5278,7 +5674,7 @@ window.Flight3Pages = {
       }
 
       const closeControl = event.target.closest?.(
-        "[data-form-close], [data-contact-panel-close], [data-form-backdrop], [data-contact-panel-backdrop]",
+        "[data-form-close], [data-contact-panel-close], [data-form-backdrop], [data-contact-panel-backdrop]"
       );
       if (closeControl || event.target === panel) {
         event.preventDefault();
@@ -5303,16 +5699,11 @@ window.Flight3Pages = {
     window.gsap.set([backdrop, dialog], { autoAlpha: 0 });
     document.documentElement.setAttribute("data-flight3-form-panel", "ready");
 
-    return {
-      open,
-      close,
-      get isOpen() {
-        return isOpen;
-      },
-    };
+    return { open, close, get isOpen() { return isOpen; } };
   }
 
   function introIsDue() {
+    if (window.Flight3Boot?.introCancelled) return false;
     try {
       return sessionStorage.getItem(CONFIG.introKey) !== "true";
     } catch (error) {
@@ -5336,12 +5727,15 @@ window.Flight3Pages = {
       const library = window.Webflow?.require?.("lottie")?.lottie;
       const animations = library?.getRegisteredAnimations?.() || [];
 
-      return (
-        animations.find((animation) => {
-          const wrapper = animation?.wrapper;
-          return Boolean(wrapper && (wrapper === element || element.contains(wrapper) || wrapper.contains?.(element)));
-        }) || null
-      );
+      return animations.find((animation) => {
+        const wrapper = animation?.wrapper;
+        return Boolean(
+          wrapper &&
+          (wrapper === element ||
+            element.contains(wrapper) ||
+            wrapper.contains?.(element))
+        );
+      }) || null;
     } catch (error) {
       return null;
     }
@@ -5363,8 +5757,10 @@ window.Flight3Pages = {
         autoplay: false,
         path: source,
         rendererSettings: {
-          preserveAspectRatio: element.getAttribute("data-preserve-aspect-ratio") || "xMidYMid meet",
-        },
+          preserveAspectRatio:
+            element.getAttribute("data-preserve-aspect-ratio") ||
+            "xMidYMid meet"
+        }
       });
 
       element.__flight3IntroLottie = animation;
@@ -5385,12 +5781,16 @@ window.Flight3Pages = {
 
   async function waitForIntroLottie(element, signal, timeout = 4000) {
     const deadline = performance.now() + timeout;
-    let animation = getIntroLottieAnimation(element) || createIntroLottieAnimation(element);
+    let animation =
+      getIntroLottieAnimation(element) ||
+      createIntroLottieAnimation(element);
 
     while (!signal?.aborted && !animation && performance.now() < deadline) {
       await new Promise((resolve) => window.setTimeout(resolve, 50));
       if (signal?.aborted) return null;
-      animation = getIntroLottieAnimation(element) || createIntroLottieAnimation(element);
+      animation =
+        getIntroLottieAnimation(element) ||
+        createIntroLottieAnimation(element);
     }
 
     if (signal?.aborted) return null;
@@ -5422,12 +5822,21 @@ window.Flight3Pages = {
     const animation = await waitForIntroLottie(element, signal);
     if (signal?.aborted) return false;
     if (!animation) {
-      console.warn("Flight3: the intro Lottie was not registered or did not finish loading.");
+      console.warn(
+        "Flight3: the intro Lottie was not registered or did not finish loading."
+      );
       return false;
     }
 
-    const authoredDuration = numericAttribute(element, "data-default-duration", CONFIG.introLottieDuration);
-    const fallbackDuration = Math.max(CONFIG.introLottieDuration, authoredDuration) + 0.6;
+    const authoredDuration = numericAttribute(
+      element,
+      "data-default-duration",
+      CONFIG.introLottieDuration
+    );
+    const fallbackDuration = Math.max(
+      CONFIG.introLottieDuration,
+      authoredDuration
+    ) + 0.6;
 
     animation.loop = false;
     animation.setDirection?.(1);
@@ -5458,6 +5867,14 @@ window.Flight3Pages = {
   }
 
   async function playInitialEntrance(container, signal) {
+    const boot = window.Flight3Boot;
+    // The head fallback has already shown the page: never hide it for a late replay.
+    if (signal.aborted || boot?.introCancelled) return;
+    const controller = new AbortController();
+    const entranceSignal = controller.signal;
+    const cancel = () => controller.abort();
+    signal.addEventListener("abort", cancel, { once: true });
+    window.addEventListener("flight3:intro-cancelled", cancel);
     const entrance = preparePageEntrance(container);
     let exit = null;
     const intro = document.querySelector("[data-site-intro]");
@@ -5470,75 +5887,54 @@ window.Flight3Pages = {
       exit?.kill();
       entrance.cleanup();
       getIntroLottieAnimation(lottieElement)?.pause?.();
-      if (currentHeroCleanup === cleanup) currentHeroCleanup = null;
-      document.documentElement.classList.remove("is-intro-pending", "is-intro-playing");
+      if (currentHeroCleanup === cancel) currentHeroCleanup = null;
+      document.documentElement.classList.remove("is-transition-preparing", "is-intro-pending", "is-intro-playing");
       if (intro) window.gsap.set(intro, { clearProps: "clipPath,opacity,visibility,willChange" });
       setDocumentBusy(false);
       setScrollLock("intro", false);
     };
-    currentHeroCleanup = cleanup;
-    signal.addEventListener("abort", cleanup, { once: true });
-
+    entranceSignal.addEventListener("abort", cleanup, { once: true });
+    currentHeroCleanup = cancel;
     document.documentElement.classList.remove("is-transition-preparing");
 
-    if (reducedMotion.matches) {
-      document.documentElement.classList.remove("is-intro-pending");
-      cleanup();
-      signal.removeEventListener("abort", cleanup);
-      return;
-    }
-
-    if (!introIsDue()) {
-      await nextPaint();
-      if (signal.aborted) return;
-      entrance.timeline.play(0);
-      await animationPromise(entrance.timeline, signal);
-      signal.removeEventListener("abort", cleanup);
-      cleanup();
-      return;
-    }
-
-    setScrollLock("intro", true);
-    setDocumentBusy(true);
-
     try {
-      if (!intro || !lottieElement) {
-        console.warn("Flight3: the intro needs [data-site-intro] and [data-site-intro-lottie].");
+      if (reducedMotion.matches || boot?.introCancelled) return;
+      if (!introIsDue() || !intro || !lottieElement) {
         document.documentElement.classList.remove("is-intro-pending");
+        await nextPaint();
+        if (entranceSignal.aborted) return;
         entrance.timeline.play(0);
-        await animationPromise(entrance.timeline, signal);
+        await animationPromise(entrance.timeline, entranceSignal);
         return;
       }
 
+      setScrollLock("intro", true);
+      setDocumentBusy(true);
       entrance.timeline.pause(0);
       window.gsap.set(intro, {
-        autoAlpha: 1,
-        clipPath: "inset(0% 0% 0% 0%)",
-        willChange: "clip-path",
+        autoAlpha: 1, clipPath: "inset(0% 0% 0% 0%)", willChange: "clip-path"
       });
       document.documentElement.classList.add("is-intro-playing");
       await nextPaint();
-      if (signal.aborted) return;
-
-      const lottiePlayed = await playIntroLottie(lottieElement, signal);
-      if (signal.aborted) return;
+      if (entranceSignal.aborted) return;
+      const lottiePlayed = await playIntroLottie(lottieElement, entranceSignal);
+      if (entranceSignal.aborted || boot?.introCancelled) return;
       exit = window.gsap.to(intro, {
         clipPath: "inset(0% 0% 100% 0%)",
         duration: CONFIG.introExitDuration,
-        ease: getTransitionEase(),
+        ease: getTransitionEase()
       });
-      await animationPromise(exit, signal);
-      if (signal.aborted) return;
-
+      await animationPromise(exit, entranceSignal);
+      if (entranceSignal.aborted) return;
       if (lottiePlayed) markIntroComplete();
-
       document.documentElement.classList.remove("is-intro-pending", "is-intro-playing");
       window.gsap.set(intro, { autoAlpha: 0 });
-
       entrance.timeline.play(0);
-      await animationPromise(entrance.timeline, signal);
+      await animationPromise(entrance.timeline, entranceSignal);
     } finally {
-      signal.removeEventListener("abort", cleanup);
+      signal.removeEventListener("abort", cancel);
+      window.removeEventListener("flight3:intro-cancelled", cancel);
+      entranceSignal.removeEventListener("abort", cleanup);
       cleanup();
       destroyOwnedIntroLottie(lottieElement);
     }
@@ -5546,7 +5942,11 @@ window.Flight3Pages = {
 
   function shouldIgnoreVisit(url, { el } = {}) {
     if (!el) return false;
-    if (el.closest("[data-no-swup], [data-transition-skip], [data-form-open], [data-contact-panel-open]")) {
+    if (
+      el.closest(
+        "[data-no-swup], [data-transition-skip], [data-form-open], [data-contact-panel-open]"
+      )
+    ) {
       return true;
     }
 
@@ -5572,7 +5972,9 @@ window.Flight3Pages = {
     if (NON_HTML_EXTENSION.test(destination.pathname)) return true;
 
     const current = new URL(window.location.href);
-    const sameDocument = destination.pathname === current.pathname && destination.search === current.search;
+    const sameDocument =
+      destination.pathname === current.pathname &&
+      destination.search === current.search;
 
     if (sameDocument) return true;
     return false;
@@ -5609,7 +6011,11 @@ window.Flight3Pages = {
   }
 
   function shouldResetVisitScroll(visit) {
-    return Boolean(visit && !visit.history?.popstate && !visit.to?.hash);
+    return Boolean(
+      visit &&
+      !visit.history?.popstate &&
+      !visit.to?.hash
+    );
   }
 
   function resetScrollPosition() {
@@ -5668,18 +6074,18 @@ window.Flight3Pages = {
             from: "(.*)",
             to: "(.*)",
             out: () => Promise.resolve(),
-            in: () => playParallelTransition(),
-          },
-        ],
-      }),
+            in: () => playParallelTransition()
+          }
+        ]
+      })
     ];
 
     if (typeof window.SwupHeadPlugin !== "undefined") {
       plugins.push(
         new window.SwupHeadPlugin({
           awaitAssets: true,
-          attributes: ["lang", "dir", "data-wf-page", "data-wf-collection", "data-wf-item-slug"],
-        }),
+          attributes: ["lang", "dir", "data-wf-page", "data-wf-collection", "data-wf-item-slug"]
+        })
       );
     }
 
@@ -5687,9 +6093,19 @@ window.Flight3Pages = {
       plugins.push(
         new window.SwupA11yPlugin({
           respectReducedMotion: true,
-          autofocus: false,
-        }),
+          autofocus: false
+        })
       );
+    }
+
+    // Optional: a CDN failure must not disable the router.
+    if (typeof window.SwupPreloadPlugin !== "undefined") {
+      plugins.push(new window.SwupPreloadPlugin({
+        preloadHoveredLinks: true,
+        preloadVisibleLinks: false,
+        preloadInitialPage: false,
+        throttle: 2
+      }));
     }
 
     const instance = new window.Swup({
@@ -5699,14 +6115,16 @@ window.Flight3Pages = {
       timeout: 12000,
       animateHistoryBrowsing: false,
       animationSelector: "[data-swup-animation-target]",
-      ignoreVisit: shouldIgnoreVisit,
+      ignoreVisit: shouldIgnoreVisit
     });
 
     instance.hooks.on("visit:start", (visit) => {
       window.Flight3Consent?.beginNavigation();
       lifecycleController.abort();
       lifecycleController = new AbortController();
-      document.documentElement.classList.remove("is-transition-preparing", "is-intro-pending", "is-intro-playing");
+      document.documentElement.classList.remove(
+        "is-transition-preparing", "is-intro-pending", "is-intro-playing"
+      );
       currentVisit = visit;
       cleanedVisitId = null;
       currentHeroCleanup?.();
@@ -5729,7 +6147,9 @@ window.Flight3Pages = {
 
       if (!visit.animation?.animate || reducedMotion.matches) return;
 
-      const set = containers?.find?.((entry) => entry.selector === CONFIG.routerSelector);
+      const set = containers?.find?.(
+        (entry) => entry.selector === CONFIG.routerSelector
+      );
       const next = set?.next;
       if (!next) return;
 
@@ -5791,7 +6211,9 @@ window.Flight3Pages = {
   api.registerPageModule = (pageOrModule, maybeFactory) => {
     const module = normalizePageModule(pageOrModule, maybeFactory);
     if (!module) {
-      throw new TypeError("Flight3.registerPageModule expects a function, a page name plus function, or { page, mount }.");
+      throw new TypeError(
+        "Flight3.registerPageModule expects a function, a page name plus function, or { page, mount }."
+      );
     }
 
     registeredPageModules.add(module);
@@ -5799,6 +6221,13 @@ window.Flight3Pages = {
   };
 
   api.refresh = refreshScrollSystems;
+  api.skipIntro = () => window.Flight3Boot?.cancel("user");
+  document.addEventListener("click", (event) => {
+    if (event.target.closest?.("[data-flight3-intro-skip]")) {
+      event.preventDefault();
+      api.skipIntro();
+    }
+  });
   api.openFormPanel = (trigger) => formPanelController?.open?.(trigger);
   api.closeFormPanel = () => formPanelController?.close?.();
   /* Backwards-compatible aliases for the earlier contact-panel API. */
@@ -5806,8 +6235,14 @@ window.Flight3Pages = {
   api.closeContactPanel = api.closeFormPanel;
 
   async function init() {
-    if (typeof window.gsap === "undefined" || typeof window.ScrollTrigger === "undefined") {
-      document.documentElement.classList.remove("is-transition-preparing", "is-intro-pending");
+    if (
+      typeof window.gsap === "undefined" ||
+      typeof window.ScrollTrigger === "undefined"
+    ) {
+      document.documentElement.classList.remove(
+        "is-transition-preparing",
+        "is-intro-pending"
+      );
       console.error("Flight3: GSAP and ScrollTrigger are required.");
       return;
     }
@@ -5816,23 +6251,27 @@ window.Flight3Pages = {
     if (typeof window.SplitText !== "undefined") {
       window.gsap.registerPlugin(window.SplitText);
     } else {
-      console.error(
-        "Flight3: SplitText is missing. Load SplitText.min.js after GSAP and before Slater 65135; text and Home hero interactions require it.",
-      );
+      console.error("Flight3: SplitText is missing. Load SplitText.min.js after GSAP and before f3-26.js; text and Home hero interactions require it.");
     }
     if (typeof window.Flip !== "undefined") {
       window.gsap.registerPlugin(window.Flip);
     }
     if (typeof window.CustomEase !== "undefined") {
       window.gsap.registerPlugin(window.CustomEase);
-      transitionEase = window.CustomEase.create("flight3-transition-snap", "0.83, 0, 0.17, 1");
+      transitionEase = window.CustomEase.create(
+        "flight3-transition-snap",
+        "0.83, 0, 0.17, 1"
+      );
     }
 
     window.ScrollTrigger.config({ ignoreMobileResize: true });
 
     const initialContainer = document.querySelector(CONFIG.routerSelector);
     if (!initialContainer) {
-      document.documentElement.classList.remove("is-transition-preparing", "is-intro-pending");
+      document.documentElement.classList.remove(
+        "is-transition-preparing",
+        "is-intro-pending"
+      );
       console.error("Flight3: #swup was not found.");
       return;
     }
@@ -5856,13 +6295,14 @@ window.Flight3Pages = {
     const signal = lifecycleController.signal;
     await waitForEntranceMedia(initialContainer, signal);
     if (signal.aborted || !initialContainer.isConnected) return;
-    prepareIncomingUkiyo(initialContainer);
+    if (!window.Flight3Boot?.introCancelled) prepareIncomingUkiyo(initialContainer);
     await playInitialEntrance(initialContainer, signal);
     if (signal.aborted || !initialContainer.isConnected) return;
     currentPageCleanup = mountPage(initialContainer);
     setScrollLock("transition", false);
     refreshScrollSystems();
     api.consent?.ready();
+    window.Flight3Boot?.finish();
   }
 
   window.Webflow = window.Webflow || [];
