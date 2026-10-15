@@ -1,3 +1,4 @@
+
 const FLIGHT3_FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), iframe, [tabindex]:not([tabindex="-1"])';
 const flight3InertOwners = new WeakMap();
@@ -3546,7 +3547,7 @@ window.Flight3Pages = {
 (() => {
   "use strict";
 
-  const VERSION = "1.26.1";
+  const VERSION = "1.26.2";
 
   const CONFIG = Object.freeze({
     introKey: "flight3-intro-session-complete",
@@ -4376,6 +4377,13 @@ window.Flight3Pages = {
     const targets = splitType === "lines" ? split.lines : split.words;
     state.splits.push(split);
 
+    // WebKit gives overflow-clipped inline blocks a bottom-edge baseline.
+    // Word masks then add a descender gap on every line, which disappears on
+    // revert(). Align masks to the line top so split and unsplit text agree.
+    if (splitType === "words") {
+      split.masks?.forEach((mask) => { mask.style.verticalAlign = "top"; });
+    }
+
     /*
      * SplitText's word masks correctly hide the vertical entrance, but an
      * italic glyph can overhang its measured word box on the inline end. Give
@@ -4657,17 +4665,14 @@ window.Flight3Pages = {
     if (signal?.aborted) return;
     const containerTop = container.getBoundingClientRect().top;
     const entranceLimit = window.innerHeight * 1.2;
-    const images = Array.from(
-      new Set(
-        container.querySelectorAll(
-          "[data-transition-reveal] img, img[data-transition-reveal], [data-ukiyo]"
-        )
-      )
-    ).filter(
-      (element) =>
-        element instanceof HTMLImageElement &&
-        element.getBoundingClientRect().top - containerTop < entranceLimit
-    );
+    const images = Array.from(container.querySelectorAll("img")).filter((image) => {
+      const rect = image.getBoundingClientRect();
+      // Include visible hero images even without a reveal attribute, but do
+      // not wait for desktop-only/lazy images hidden by the mobile layout.
+      return rect.width > 0 && rect.height > 0 &&
+        rect.top - containerTop < entranceLimit &&
+        rect.bottom - containerTop > 0;
+    });
 
     const pendingImages = images.filter(
       (image) => !image.complete || image.naturalWidth === 0
@@ -4788,8 +4793,15 @@ window.Flight3Pages = {
 
     window.gsap.set(next, {
       autoAlpha: 1,
+      force3D: true,
       willChange: "transform"
     });
+
+    // Give WebKit a paint with the incoming layer still below the viewport.
+    // Starting its travel in the same frame as visibility/layer promotion can
+    // expose an unpainted tile, especially with clipped hero text and images.
+    await nextPaint();
+    if (signal.aborted || currentVisit !== visit || !next.isConnected) return;
 
     window.gsap.set(previous, {
       transformOrigin: "50% 0%",
@@ -6170,24 +6182,30 @@ window.Flight3Pages = {
       const container = document.querySelector(CONFIG.routerSelector);
 
       activeTransition = null;
+
+      // Keep the landed page fixed over the viewport while Webflow readies
+      // its functional modules. Awaiting this after releasing the layer lets
+      // Safari paint a page whose hero/scroll geometry is not mounted yet.
+      const functionalReady = await reinitializeWebflow(container);
+      if (functionalReady === false) return;
+      if (signal.aborted || currentVisit !== visit || !container?.isConnected) return;
+
+      // Release the fixed layer, reset scroll, mount and measure in one task:
+      // no browser paint can occur between these layout changes. Measurements
+      // must use normal flow (a transformed ancestor breaks fixed/sticky pins).
       resetTransitionPresentation();
 
       /* Mobile browsers may ignore scrollTo while the document is
          overflow-locked, then restore the outgoing page's scroll position. */
       document.documentElement.classList.remove("is-transitioning");
-      setDocumentBusy(false);
-      setScrollLock("transition", false);
       scrollAfterVisit(visit, container);
       syncInitialNavTheme(container, { atScroll: true });
-
-      const functionalReady = await reinitializeWebflow(container);
-      if (functionalReady === false) return;
-      if (signal.aborted || currentVisit !== visit || !container?.isConnected) return;
-
       syncWebflowCurrentLinks();
       currentPageCleanup = mountPage(container);
-      // Theme triggers have selected the active section, including restored history scroll.
-      refreshScrollSystems();
+      cancelAnimationFrame(refreshFrame);
+      refreshFrame = 0;
+      lenis?.resize?.();
+      window.ScrollTrigger?.refresh?.();
 
       /* Webflow modules, SplitText and ScrollTrigger can all change layout
          during their first refresh. Reassert a normal route's top position
@@ -6197,6 +6215,8 @@ window.Flight3Pages = {
       if (signal.aborted || currentVisit !== visit) return;
       scrollAfterVisit(visit, container);
       syncInitialNavTheme(container, { atScroll: true });
+      setDocumentBusy(false);
+      setScrollLock("transition", false);
       currentVisit = null;
       window.Flight3Consent?.completeNavigation();
     });
